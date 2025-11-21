@@ -9,12 +9,11 @@ import {
 
 import { google } from "googleapis";
 
-// Load environment variables from Railway
+// Environment variables from Railway
 const DISCORD_TOKEN = process.env.DISCORD_TOKEN;
 const CLIENT_ID = process.env.DISCORD_CLIENT_ID;
 const GUILD_ID = process.env.DISCORD_GUILD_ID;
 
-const GOOGLE_PROJECT_ID = process.env.GOOGLE_PROJECT_ID;
 const GOOGLE_CLIENT_EMAIL = process.env.GOOGLE_CLIENT_EMAIL;
 const GOOGLE_PRIVATE_KEY = process.env.GOOGLE_PRIVATE_KEY;
 
@@ -28,7 +27,7 @@ const auth = new google.auth.JWT(
 
 const sheets = google.sheets({ version: "v4", auth });
 
-// Define the slash command
+// Slash command definition (with autocomplete)
 const factionInfoCmd = new SlashCommandBuilder()
     .setName("factioninfo")
     .setDescription("Look up faction information from the dossier.")
@@ -36,9 +35,10 @@ const factionInfoCmd = new SlashCommandBuilder()
         option.setName("faction")
             .setDescription("Faction name")
             .setRequired(true)
+            .setAutocomplete(true)
     );
 
-// Deploy commands to Discord
+// Deploy slash command
 const rest = new REST({ version: "10" }).setToken(DISCORD_TOKEN);
 
 async function deployCommands() {
@@ -53,7 +53,32 @@ async function deployCommands() {
     }
 }
 
-// Create Discord client
+// Cache factions so we don't re-ping Google every time
+let cachedFactions = [];
+
+// Load faction names from sheet (Column A and Column G)
+async function loadFactions(sheetId) {
+    const res = await sheets.spreadsheets.values.get({
+        spreadsheetId: sheetId,
+        range: "Sheet1!A1:I999"
+    });
+
+    const rows = res.data.values || [];
+    const data = rows.slice(1);
+
+    const factionsSet = new Set();
+
+    for (const row of data) {
+        if (row[0]) factionsSet.add(row[0].trim());
+        if (row[6]) factionsSet.add(row[6].trim());
+    }
+
+    // Remove blanks + duplicates
+    cachedFactions = [...factionsSet].filter(f => f.length > 0);
+    console.log("Loaded factions:", cachedFactions);
+}
+
+// Discord client
 const client = new Client({
     intents: [GatewayIntentBits.Guilds]
 });
@@ -62,19 +87,39 @@ client.once("ready", () => {
     console.log(`Logged in as ${client.user.tag}`);
 });
 
-// Command handler
+// AUTOCOMPLETE HANDLER
+client.on("interactionCreate", async interaction => {
+    if (!interaction.isAutocomplete()) return;
+    if (interaction.commandName !== "factioninfo") return;
+
+    const focused = interaction.options.getFocused();
+    const sheetId = process.env.GOOGLE_SHEET_ID;
+
+    if (cachedFactions.length === 0) {
+        await loadFactions(sheetId);
+    }
+
+    // Suggest factions matching the typed letters
+    const filtered = cachedFactions
+        .filter(f => f.toLowerCase().includes(focused.toLowerCase()))
+        .slice(0, 25)
+        .map(f => ({ name: f, value: f }));
+
+    await interaction.respond(filtered);
+});
+
+// MAIN COMMAND HANDLER
 client.on("interactionCreate", async interaction => {
     if (!interaction.isChatInputCommand()) return;
 
     if (interaction.commandName === "factioninfo") {
         const factionRequested = interaction.options.getString("faction").toLowerCase();
+        const sheetId = process.env.GOOGLE_SHEET_ID;
 
         try {
-            const sheetId = process.env.GOOGLE_SHEET_ID;
-
             const res = await sheets.spreadsheets.values.get({
                 spreadsheetId: sheetId,
-                range: "Sheet1!A1:H999"
+                range: "Sheet1!A1:I999"
             });
 
             const rows = res.data.values;
@@ -82,42 +127,36 @@ client.on("interactionCreate", async interaction => {
                 return interaction.reply("No data found in the sheet.");
             }
 
-            const headers = rows[0];
             const data = rows.slice(1);
 
-            // Match faction
-            const match = data.filter(r => r[0] && r[0].toLowerCase() === factionRequested);
+            // People (A–E)
+            const people = data
+                .filter(r => r[0] && r[0].toLowerCase() === factionRequested)
+                .map(r => ({
+                    character: r[1] || "N/A",
+                    phone: r[2] || "N/A",
+                    personAddress: r[3] || "N/A",
+                    leader: r[4] === "TRUE"
+                }));
 
-            if (match.length === 0) {
-                return interaction.reply("Faction not found in the dossier.");
-            }
+            // Locations (G–I)
+            const locationRows = data.filter(r =>
+                r[6] && r[6].toLowerCase() === factionRequested
+            );
 
-            // Collect info
-            const people = [];
-            const locations = new Set();
+            let hqAddress = null;
+            const otherLocations = new Set();
 
-            for (const row of match) {
-                const faction = row[0];
-                const character = row[1];
-                const phone = row[2];
-                const address = row[3];
-                const isLeader = row[4] === "TRUE";
-                const locationFaction = row[6];
-                const locationAddress = row[7];
+            for (const row of locationRows) {
+                const address = row[7] || null;
+                const isHQ = row[8] === "TRUE";
 
-                if (character) {
-                    people.push({
-                        character,
-                        phone: phone || "N/A",
-                        address: address || "N/A",
-                        leader: isLeader
-                    });
-                }
+                if (!address) continue;
 
-                if (locationFaction && locationFaction.toLowerCase() === factionRequested) {
-                    if (locationAddress) {
-                        locations.add(locationAddress);
-                    }
+                if (isHQ) {
+                    hqAddress = address;
+                } else {
+                    otherLocations.add(address);
                 }
             }
 
@@ -126,26 +165,30 @@ client.on("interactionCreate", async interaction => {
                 .setTitle(`Faction Info: ${factionRequested}`)
                 .setColor(0x5e81ac);
 
-            // People section
+            // Members section
             if (people.length > 0) {
-                let peopleText = people.map(p =>
+                const memberText = people.map(p =>
                     `**${p.character}**${p.leader ? " (Leader)" : ""}\n` +
                     `📞 ${p.phone}\n` +
-                    `🏠 ${p.address}\n`
+                    `🏠 ${p.personAddress}\n`
                 ).join("\n");
 
-                embed.addFields({
-                    name: "Members",
-                    value: peopleText
-                });
+                embed.addFields({ name: "Members", value: memberText });
             }
 
             // Locations section
-            if (locations.size > 0) {
-                embed.addFields({
-                    name: "Known Locations",
-                    value: [...locations].join("\n")
-                });
+            let locationText = "";
+
+            if (hqAddress) {
+                locationText += `🏠 **HQ:** ${hqAddress}\n`;
+            }
+
+            for (const addr of otherLocations) {
+                locationText += `📍 ${addr}\n`;
+            }
+
+            if (locationText.length > 0) {
+                embed.addFields({ name: "Locations", value: locationText });
             }
 
             await interaction.reply({ embeds: [embed] });
@@ -157,6 +200,6 @@ client.on("interactionCreate", async interaction => {
     }
 });
 
-// Start bot
+// Start the bot
 deployCommands();
 client.login(DISCORD_TOKEN);
