@@ -219,13 +219,19 @@ client.on("interactionCreate", async interaction => {
 // STYLE C — SINGLE FIELD EMBED
 // --------------------
 
-// Remove duplicates from HQs and addresses
+// Remove duplicates, prevent HQ appearing twice
 const uniqueHQs = [...new Set(hqs)];
-const uniqueAddrs = [...new Set(addresses)];
+const uniqueAddrs = [...new Set(addresses.filter(a => !uniqueHQs.includes(a)))];
 
+// STYLE C — ONE FIELD OUTPUT
 const embed = new EmbedBuilder()
     .setColor(0x2b6cb0)
-    .setTitle(`━━━━━━━━━━━━━━━━━━━━━━━━━━\n🗂️  MERIDIAN DATABASE ENTRY\nFaction: **${interaction.options.getString("faction")}**\n━━━━━━━━━━━━━━━━━━━━━━━━━━`)
+    .setTitle(
+        `━━━━━━━━━━━━━━━━━━━━━━━━━━\n` +
+        `🗂️  MERIDIAN DATABASE ENTRY\n` +
+        `Faction: **${interaction.options.getString("faction")}**\n` +
+        `━━━━━━━━━━━━━━━━━━━━━━━━━━`
+    )
     .addFields({
         name: "⠀",
         value:
@@ -233,14 +239,14 @@ const embed = new EmbedBuilder()
             (
                 people.length
                     ? people.map(p =>
-                        `• **${p.character}**${p.leader ? " (Leader)" : ""}\n` +
+                        `**${p.character}**${p.leader ? " (Leader)" : ""}\n` +
                         `  • Phone: ${p.phone}\n` +
-                        `  • Residence: ${p.personalAddress}`
+                        `  • Residence: ${p.personalAddress}\n`
                     ).join("\n")
                     : "_No command members listed._"
             )
             +
-            `\n\n### 🏛️ Known Faction Properties\n` +
+            `\n🏛️ Known Org Properties\n` +
             (
                 uniqueHQs.length || uniqueAddrs.length
                     ? [
@@ -253,22 +259,6 @@ const embed = new EmbedBuilder()
             `\n━━━━━━━━━━━━━━━━━━━━━━━━━━`
     });
 
-            let locText = "";
-            hqs.forEach(addr => locText += `🏠 **HQ:** ${addr}\n`);
-            addresses.forEach(addr => locText += `📍 ${addr}\n`);
-
-            embed.addFields({
-                name: "Locations",
-                value: locText || "No addresses listed."
-            });
-
-            return interaction.reply({ embeds: [embed] });
-
-        } catch (err) {
-            console.error("FACTIONINFO ERROR:", err);
-            return interaction.reply("There was an error accessing the Google Sheet.");
-        }
-    }
 
     // /addproperty
     if (interaction.commandName === "addproperty") {
@@ -325,5 +315,6 @@ const embed = new EmbedBuilder()
 // ───────────────────────────────────────────────────────────
 deployCommands();
 client.login(DISCORD_TOKEN);
+
 
 
