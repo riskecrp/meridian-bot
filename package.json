@@ -1,0 +1,11 @@
+{
+  "name": "factioninfobot",
+  "version": "1.0.0",
+  "description": "A Discord bot that pulls faction information from Google Sheets.",
+  "main": "index.js",
+  "type": "module",
+  "dependencies": {
+    "discord.js": "^14.14.1",
+    "googleapis": "^127.0.0"
+  }
+}
