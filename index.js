@@ -216,19 +216,30 @@ client.on("interactionCreate", async interaction => {
             }
 
             const embed = new EmbedBuilder()
-                .setColor(0x2b6cb0)
-                .setTitle(`Faction Info: ${factionRequested}`);
-
-            embed.addFields({
-                name: "Members",
-                value: people.length
-                    ? people
-                        .map(p =>
-                            `**${p.character}**${p.leader ? " (Leader)" : ""}\n📞 ${p.phone}\n🏠 ${p.personalAddress}`
-                        )
-                        .join("\n\n")
-                    : "No members listed."
-            });
+    .setColor(0x2b6cb0)
+    .setTitle(`Faction Information: ${factionRequested}`)
+    .setDescription(
+        `### 👥 Members\n` +
+        (
+            people.length
+                ? people.map(p =>
+                    `• **${p.character}**${p.leader ? " ⭐" : ""}\n` +
+                    `  └ 📞 ${p.phone}\n` +
+                    `  └ 🏠 ${p.personalAddress}`
+                ).join("\n")
+                : "_No members listed._"
+        )
+        +
+        `\n\n### 📍 Locations\n` +
+        (
+            hqs.length || addresses.length
+                ? [
+                    ...hqs.map(a => `• 🏠 **HQ:** ${a}`),
+                    ...addresses.map(a => `• 📍 ${a}`)
+                ].join("\n")
+                : "_No locations listed._"
+        )
+    );
 
             let locText = "";
             hqs.forEach(addr => locText += `🏠 **HQ:** ${addr}\n`);
@@ -302,3 +313,4 @@ client.on("interactionCreate", async interaction => {
 // ───────────────────────────────────────────────────────────
 deployCommands();
 client.login(DISCORD_TOKEN);
+
