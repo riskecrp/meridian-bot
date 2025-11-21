@@ -4,7 +4,6 @@ import {
     REST,
     Routes,
     SlashCommandBuilder,
-    PermissionFlagsBits,
     EmbedBuilder
 } from "discord.js";
 
@@ -47,7 +46,7 @@ const factionInfoCmd = new SlashCommandBuilder()
 // /addproperty
 const addPropertyCmd = new SlashCommandBuilder()
     .setName("addproperty")
-    .setDescription("Add a faction property to the database (Management only).")
+    .setDescription("Add a faction property (Management only).")
     .addStringOption(option =>
         option
             .setName("date")
@@ -121,8 +120,8 @@ async function loadFactions() {
     const set = new Set();
 
     for (const r of data) {
-        if (r[0]) set.add(r[0].trim());
-        if (r[5]) set.add(r[5].trim());
+        if (r[0]) set.add(r[0].trim());   // Table 1 factions
+        if (r[5]) set.add(r[5].trim());   // Table 2 factions
     }
 
     cachedFactions = [...set];
@@ -132,9 +131,7 @@ async function loadFactions() {
 // Discord Client
 // ───────────────────────────────────────────
 
-const client = new Client({
-    intents: [GatewayIntentBits.Guilds]
-});
+const client = new Client({ intents: [GatewayIntentBits.Guilds] });
 
 client.once("clientReady", () => {
     console.log(`Logged in as ${client.user.tag}`);
@@ -156,12 +153,12 @@ client.on("interactionCreate", async interaction => {
     if (cachedFactions.length === 0)
         await loadFactions();
 
-    const choices = cachedFactions
+    const list = cachedFactions
         .filter(f => f.toLowerCase().includes(focused.toLowerCase()))
         .slice(0, 25)
         .map(f => ({ name: f, value: f }));
 
-    await interaction.respond(choices);
+    await interaction.respond(list);
 });
 
 // ───────────────────────────────────────────
@@ -184,7 +181,7 @@ client.on("interactionCreate", async interaction => {
             const rows = res.data.values || [];
             const data = rows.slice(1);
 
-            // People table (A–E)
+            // People (A–E)
             const people = data
                 .filter(r => r[0] && r[0].toLowerCase() === factionRequested)
                 .map(r => ({
@@ -195,7 +192,9 @@ client.on("interactionCreate", async interaction => {
                 }));
 
             // Locations (F–H)
-            const locRows = data.filter(r => r[5] && r[5].toLowerCase() === factionRequested);
+            const locRows = data.filter(r =>
+                r[5] && r[5].toLowerCase() === factionRequested
+            );
 
             const hqs = [];
             const addresses = [];
@@ -210,7 +209,7 @@ client.on("interactionCreate", async interaction => {
                 else addresses.push(addr);
             }
 
-            // Embed
+            // Build embed
             const embed = new EmbedBuilder()
                 .setTitle(`Faction Info: ${factionRequested}`)
                 .setColor(0x2b6cb0);
@@ -244,10 +243,15 @@ client.on("interactionCreate", async interaction => {
 
     // ─────────────── /addproperty ───────────────
     if (interaction.commandName === "addproperty") {
-        const mgmtRole = interaction.guild.roles.cache.find(r => r.name === "Management");
+        const mgmtRole = interaction.guild.roles.cache.find(
+            r => r.name === "Management"
+        );
 
         if (!interaction.member.roles.cache.has(mgmtRole.id))
-            return interaction.reply({ content: "You do not have permission to use this command.", ephemeral: true });
+            return interaction.reply({
+                content: "You do not have permission to use this command.",
+                ephemeral: true
+            });
 
         const date = interaction.options.getString("date");
         const faction = interaction.options.getString("faction");
@@ -255,12 +259,15 @@ client.on("interactionCreate", async interaction => {
         const type = interaction.options.getString("type");
         const fmProvided = interaction.options.getBoolean("fm_provided");
 
-        // Validate date format
+        // Validate date
         if (!/^\d{4}-\d{2}-\d{2}$/.test(date))
-            return interaction.reply({ content: "Invalid date format. Use YYYY-MM-DD.", ephemeral: true });
+            return interaction.reply({
+                content: "Invalid date format. Use YYYY-MM-DD.",
+                ephemeral: true
+            });
 
         try {
-            // Load Sheet1
+            // Load Sheet1 for dup check
             const res = await sheets.spreadsheets.values.get({
                 spreadsheetId: GOOGLE_SHEET_ID,
                 range: "Sheet1!A1:H999"
@@ -282,10 +289,10 @@ client.on("interactionCreate", async interaction => {
                 });
             }
 
-            // Write to PropertyRewards
+            // ───── WRITE TO PropertyRewards (A–E)
             await sheets.spreadsheets.values.append({
                 spreadsheetId: GOOGLE_SHEET_ID,
-                range: "PropertyRewards!A1",
+                range: "PropertyRewards!A:E",
                 valueInputOption: "USER_ENTERED",
                 requestBody: {
                     values: [[
@@ -298,10 +305,10 @@ client.on("interactionCreate", async interaction => {
                 }
             });
 
-            // Write to Sheet1 (Columns F–H)
+            // ───── WRITE TO Sheet1 (F–H) — fixed range
             await sheets.spreadsheets.values.append({
                 spreadsheetId: GOOGLE_SHEET_ID,
-                range: "Sheet1!F1",
+                range: "Sheet1!F:H",
                 valueInputOption: "USER_ENTERED",
                 requestBody: {
                     values: [[
@@ -313,7 +320,11 @@ client.on("interactionCreate", async interaction => {
             });
 
             await interaction.reply({
-                content: `Property added for **${faction}**:\n📍 ${address}\n🏷️ Type: ${type}\nFM Provided: ${fmProvided ? "Yes" : "No"}`,
+                content:
+                    `Property added for **${faction}**:\n` +
+                    `📍 ${address}\n` +
+                    `🏷️ Type: ${type}\n` +
+                    `FM Provided: ${fmProvided ? "Yes" : "No"}`,
                 ephemeral: true
             });
 
