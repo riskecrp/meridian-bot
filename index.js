@@ -198,12 +198,12 @@ client.on("interactionCreate", async interaction => {
             });
 
             embed.addFields({
-                name: "Members",
+                name: "Command Members",
                 value: peopleText
             });
         } else {
             embed.addFields({
-                name: "Members",
+                name: "Command Members",
                 value: "(This faction has no registered personnel.)"
             });
         }
@@ -229,3 +229,4 @@ client.on("interactionCreate", async interaction => {
 
 deployCommands();
 client.login(DISCORD_TOKEN);
+
