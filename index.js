@@ -11,8 +11,8 @@ import { google } from "googleapis";
 
 // Environment variables
 const DISCORD_TOKEN = process.env.DISCORD_TOKEN;
-const CLIENT_ID = process.env.DISCORD_CLIENT_ID;
-const GUILD_ID = process.env.DISCORD_GUILD_ID;
+const CLIENT_ID = process.env.CLIENT_ID;
+const GUILD_ID = process.env.GUILD_ID;
 const GOOGLE_CLIENT_EMAIL = process.env.GOOGLE_CLIENT_EMAIL;
 const GOOGLE_PRIVATE_KEY = process.env.GOOGLE_PRIVATE_KEY;
 const GOOGLE_SHEET_ID = process.env.GOOGLE_SHEET_ID;
@@ -114,7 +114,7 @@ client.on("interactionCreate", async interaction => {
     const factionRequested = interaction.options.getString("faction").toLowerCase();
 
     try {
-        const res = await sheets.spreadsheets.values.get({
+        const res = await sheets.spreadsreadsheets.values.get({
             spreadsheetId: GOOGLE_SHEET_ID,
             range: "Sheet1!A1:H999"
         });
@@ -135,7 +135,7 @@ client.on("interactionCreate", async interaction => {
             }));
 
         //
-        // LOCATION TABLE (F–H)
+        // LOCATION TABLE (F–H) — FINAL CONFIRMED INDEXES
         //
         const locationRows = data.filter(r =>
             r[5] && r[5].toLowerCase() === factionRequested
