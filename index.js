@@ -73,7 +73,6 @@ async function loadFactions(sheetId) {
         if (row[6]) factionsSet.add(row[6].trim());
     }
 
-    // Remove blanks + duplicates
     cachedFactions = [...factionsSet].filter(f => f.length > 0);
     console.log("Loaded factions:", cachedFactions);
 }
@@ -85,6 +84,17 @@ const client = new Client({
 
 client.once("ready", () => {
     console.log(`Logged in as ${client.user.tag}`);
+
+    // Set presence/status message
+    client.user.setPresence({
+        activities: [
+            {
+                name: "Waiting for associate request...",
+                type: 3 // WATCHING
+            }
+        ],
+        status: "online"
+    });
 });
 
 // AUTOCOMPLETE HANDLER
@@ -99,7 +109,6 @@ client.on("interactionCreate", async interaction => {
         await loadFactions(sheetId);
     }
 
-    // Suggest factions matching the typed letters
     const filtered = cachedFactions
         .filter(f => f.toLowerCase().includes(focused.toLowerCase()))
         .slice(0, 25)
