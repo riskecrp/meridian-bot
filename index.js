@@ -27,9 +27,9 @@ const auth = new google.auth.JWT(
 
 const sheets = google.sheets({ version: "v4", auth });
 
-// ───────────────────────────────────────────
+// ─────────────────────────────
 // Slash Commands
-// ───────────────────────────────────────────
+// ─────────────────────────────
 
 // /factioninfo
 const factionInfoCmd = new SlashCommandBuilder()
@@ -48,27 +48,23 @@ const addPropertyCmd = new SlashCommandBuilder()
     .setName("addproperty")
     .setDescription("Add a faction property (Management only).")
     .addStringOption(option =>
-        option
-            .setName("date")
+        option.setName("date")
             .setDescription("Date given (YYYY-MM-DD)")
             .setRequired(true)
     )
     .addStringOption(option =>
-        option
-            .setName("faction")
+        option.setName("faction")
             .setDescription("Faction name")
             .setRequired(true)
             .setAutocomplete(true)
     )
     .addStringOption(option =>
-        option
-            .setName("address")
-            .setDescription("Address of the property")
+        option.setName("address")
+            .setDescription("Property address")
             .setRequired(true)
     )
     .addStringOption(option =>
-        option
-            .setName("type")
+        option.setName("type")
             .setDescription("Property type")
             .setRequired(true)
             .addChoices(
@@ -78,15 +74,14 @@ const addPropertyCmd = new SlashCommandBuilder()
             )
     )
     .addBooleanOption(option =>
-        option
-            .setName("fm_provided")
+        option.setName("fm_provided")
             .setDescription("Was the property FM provided?")
             .setRequired(true)
     );
 
-// ───────────────────────────────────────────
+// ─────────────────────────────
 // Register Commands
-// ───────────────────────────────────────────
+// ─────────────────────────────
 
 const rest = new REST({ version: "10" }).setToken(DISCORD_TOKEN);
 
@@ -102,9 +97,9 @@ async function deployCommands() {
     }
 }
 
-// ───────────────────────────────────────────
-// Load Factions for Autocomplete
-// ───────────────────────────────────────────
+// ─────────────────────────────
+// Autocomplete cache
+// ─────────────────────────────
 
 let cachedFactions = [];
 
@@ -120,30 +115,33 @@ async function loadFactions() {
     const set = new Set();
 
     for (const r of data) {
-        if (r[0]) set.add(r[0].trim());   // Table 1 factions
-        if (r[5]) set.add(r[5].trim());   // Table 2 factions
+        if (r[0]) set.add(r[0].trim());   // People table
+        if (r[5]) set.add(r[5].trim());   // Location table
     }
 
     cachedFactions = [...set];
 }
 
-// ───────────────────────────────────────────
+// ─────────────────────────────
 // Discord Client
-// ───────────────────────────────────────────
+// ─────────────────────────────
 
-const client = new Client({ intents: [GatewayIntentBits.Guilds] });
+const client = new Client({
+    intents: [GatewayIntentBits.Guilds]
+});
 
 client.once("clientReady", () => {
     console.log(`Logged in as ${client.user.tag}`);
+
     client.user.setPresence({
         activities: [{ name: "Waiting for associate request...", type: 3 }],
         status: "online"
     });
 });
 
-// ───────────────────────────────────────────
+// ─────────────────────────────
 // Autocomplete Handler
-// ───────────────────────────────────────────
+// ─────────────────────────────
 
 client.on("interactionCreate", async interaction => {
     if (!interaction.isAutocomplete()) return;
@@ -161,14 +159,14 @@ client.on("interactionCreate", async interaction => {
     await interaction.respond(list);
 });
 
-// ───────────────────────────────────────────
-// Main Interaction Handler
-// ───────────────────────────────────────────
+// ─────────────────────────────
+// Main Command Handler
+// ─────────────────────────────
 
 client.on("interactionCreate", async interaction => {
     if (!interaction.isChatInputCommand()) return;
 
-    // ─────────────── /factioninfo ───────────────
+    // ─────────────── /factioninfo
     if (interaction.commandName === "factioninfo") {
         const factionRequested = interaction.options.getString("faction").toLowerCase();
 
@@ -183,17 +181,17 @@ client.on("interactionCreate", async interaction => {
 
             // People (A–E)
             const people = data
-                .filter(r => r[0] && r[0].toLowerCase() === factionRequested)
+                .filter(r => r[0]?.toLowerCase() === factionRequested)
                 .map(r => ({
                     character: r[1] || "N/A",
                     phone: r[2] || "N/A",
                     personalAddress: r[3] || "N/A",
-                    leader: r[4] && r[4].toUpperCase() === "TRUE"
+                    leader: r[4]?.toUpperCase() === "TRUE"
                 }));
 
             // Locations (F–H)
             const locRows = data.filter(r =>
-                r[5] && r[5].toLowerCase() === factionRequested
+                r[5]?.toLowerCase() === factionRequested
             );
 
             const hqs = [];
@@ -201,15 +199,13 @@ client.on("interactionCreate", async interaction => {
 
             for (const r of locRows) {
                 const addr = r[6]?.trim();
-                const isHQ = r[7] && r[7].toUpperCase() === "TRUE";
+                const isHQ = r[7]?.toUpperCase() === "TRUE";
 
                 if (!addr) continue;
-
                 if (isHQ) hqs.push(addr);
                 else addresses.push(addr);
             }
 
-            // Build embed
             const embed = new EmbedBuilder()
                 .setTitle(`Faction Info: ${factionRequested}`)
                 .setColor(0x2b6cb0);
@@ -241,17 +237,17 @@ client.on("interactionCreate", async interaction => {
         }
     }
 
-    // ─────────────── /addproperty ───────────────
+    // ─────────────── /addproperty
     if (interaction.commandName === "addproperty") {
-        const mgmtRole = interaction.guild.roles.cache.find(
-            r => r.name === "Management"
-        );
 
-        if (!interaction.member.roles.cache.has(mgmtRole.id))
+        // Role restriction
+        const mgmtRole = interaction.guild.roles.cache.find(r => r.name === "Management");
+        if (!interaction.member.roles.cache.has(mgmtRole?.id)) {
             return interaction.reply({
                 content: "You do not have permission to use this command.",
                 ephemeral: true
             });
+        }
 
         const date = interaction.options.getString("date");
         const faction = interaction.options.getString("faction");
@@ -259,15 +255,15 @@ client.on("interactionCreate", async interaction => {
         const type = interaction.options.getString("type");
         const fmProvided = interaction.options.getBoolean("fm_provided");
 
-        // Validate date
-        if (!/^\d{4}-\d{2}-\d{2}$/.test(date))
+        if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) {
             return interaction.reply({
                 content: "Invalid date format. Use YYYY-MM-DD.",
                 ephemeral: true
             });
+        }
 
         try {
-            // Load Sheet1 for dup check
+            // Load Sheet1 for duplicate protection
             const res = await sheets.spreadsheets.values.get({
                 spreadsheetId: GOOGLE_SHEET_ID,
                 range: "Sheet1!A1:H999"
@@ -276,7 +272,6 @@ client.on("interactionCreate", async interaction => {
             const rows = res.data.values || [];
             const data = rows.slice(1);
 
-            // Duplicate check
             const exists = data.some(r =>
                 r[5]?.toLowerCase() === faction.toLowerCase() &&
                 r[6]?.trim().toLowerCase() === address.toLowerCase()
@@ -289,10 +284,10 @@ client.on("interactionCreate", async interaction => {
                 });
             }
 
-            // ───── WRITE TO PropertyRewards (A–E)
+            // ───────── Write to PropertyRewards (A–E), starting row 2
             await sheets.spreadsheets.values.append({
                 spreadsheetId: GOOGLE_SHEET_ID,
-                range: "PropertyRewards!A:E",
+                range: "PropertyRewards!A2:E",
                 valueInputOption: "USER_ENTERED",
                 requestBody: {
                     values: [[
@@ -305,10 +300,10 @@ client.on("interactionCreate", async interaction => {
                 }
             });
 
-            // ───── WRITE TO Sheet1 (F–H) — fixed range
+            // ───────── Write to Sheet1 (F–H), starting row 2
             await sheets.spreadsheets.values.append({
                 spreadsheetId: GOOGLE_SHEET_ID,
-                range: "Sheet1!F:H",
+                range: "Sheet1!F2:H",
                 valueInputOption: "USER_ENTERED",
                 requestBody: {
                     values: [[
@@ -335,9 +330,9 @@ client.on("interactionCreate", async interaction => {
     }
 });
 
-// ───────────────────────────────────────────
-// Start Bot
-// ───────────────────────────────────────────
+// ─────────────────────────────
+// Start bot
+// ─────────────────────────────
 
 deployCommands();
 client.login(DISCORD_TOKEN);
