@@ -40,7 +40,7 @@ const factionInfoCmd = new SlashCommandBuilder()
 
 const rest = new REST({ version: "10" }).setToken(DISCORD_TOKEN);
 
-// Deploy commands
+// Register commands
 async function deployCommands() {
     try {
         await rest.put(
@@ -89,7 +89,7 @@ client.once("ready", () => {
     });
 });
 
-// AUTOCOMPLETE
+// AUTOCOMPLETE HANDLER
 client.on("interactionCreate", async interaction => {
     if (!interaction.isAutocomplete()) return;
     if (interaction.commandName !== "factioninfo") return;
@@ -106,7 +106,7 @@ client.on("interactionCreate", async interaction => {
     await interaction.respond(list);
 });
 
-// MAIN COMMAND
+// MAIN COMMAND HANDLER
 client.on("interactionCreate", async interaction => {
     if (!interaction.isChatInputCommand()) return;
     if (interaction.commandName !== "factioninfo") return;
@@ -125,16 +125,34 @@ client.on("interactionCreate", async interaction => {
         //
         // PEOPLE TABLE — Columns A–E (0–4)
         //
-        const people = data
-            .filter(r =>
-                r[0] && r[0].toLowerCase().trim() === factionRequested
-            )
-            .map(r => ({
-                character: r[1] || "N/A",
-                phone: r[2] || "N/A",
-                personalAddress: r[3] || "N/A",
-                leader: r[4] && r[4].toUpperCase() === "TRUE"
-            }));
+        const peopleRows = data.filter(r =>
+            r[0] && r[0].toLowerCase().trim() === factionRequested
+        );
+
+        // Merge by character
+        const mergedPeople = {};
+
+        for (const r of peopleRows) {
+            const name = r[1] || "Unknown";
+            const phone = r[2] || null;
+            const address = r[3] || null;
+            const isLeader = r[4] && r[4].toUpperCase() === "TRUE";
+
+            if (!mergedPeople[name]) {
+                mergedPeople[name] = {
+                    character: name,
+                    phones: new Set(),
+                    addresses: new Set(),
+                    leader: false
+                };
+            }
+
+            if (phone && phone !== "N/A") mergedPeople[name].phones.add(phone);
+            if (address && address !== "N/A") mergedPeople[name].addresses.add(address);
+            if (isLeader) mergedPeople[name].leader = true;
+        }
+
+        const mergedPeopleArray = Object.values(mergedPeople);
 
         //
         // LOCATION TABLE — Columns F–H (5–7)
@@ -160,20 +178,28 @@ client.on("interactionCreate", async interaction => {
         // BUILD EMBED
         //
         const embed = new EmbedBuilder()
-            .setTitle(`Faction Info: ${factionRequested}`)
+            .setTitle(`📁 ${interaction.options.getString("faction")} Intelligence File`)
             .setColor(0x2b6cb0);
 
-        // Members
-        if (people.length > 0) {
+        // PEOPLE SECTION
+        if (mergedPeopleArray.length > 0) {
+            let peopleText = "";
+
+            mergedPeopleArray.forEach((p, idx) => {
+                const phones = [...p.phones].map(ph => `📞 ${ph}`).join("\n");
+                const personalAddresses = [...p.addresses].map(a => `🏠 ${a}`).join("\n");
+
+                peopleText += `**${p.character}**${p.leader ? " (Leader)" : ""}\n`;
+                if (phones) peopleText += phones + "\n";
+                if (personalAddresses) peopleText += personalAddresses + "\n";
+
+                if (idx < mergedPeopleArray.length - 1)
+                    peopleText += `──────────────\n`;
+            });
+
             embed.addFields({
                 name: "Members",
-                value: people
-                    .map(p =>
-                        `**${p.character}**${p.leader ? " (Leader)" : ""}\n` +
-                        `📞 ${p.phone}\n` +
-                        `🏠 ${p.personalAddress}`
-                    )
-                    .join("\n\n")
+                value: peopleText
             });
         } else {
             embed.addFields({
@@ -182,7 +208,7 @@ client.on("interactionCreate", async interaction => {
             });
         }
 
-        // Locations
+        // LOCATIONS SECTION
         let locText = "";
 
         hqs.forEach(addr => locText += `🏠 **HQ:** ${addr}\n`);
