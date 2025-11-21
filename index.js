@@ -31,7 +31,6 @@ const sheets = google.sheets({ version: "v4", auth });
 // Slash Commands
 // ─────────────────────────────
 
-// /factioninfo
 const factionInfoCmd = new SlashCommandBuilder()
     .setName("factioninfo")
     .setDescription("Look up faction information from the Meridian database.")
@@ -43,7 +42,6 @@ const factionInfoCmd = new SlashCommandBuilder()
             .setAutocomplete(true)
     );
 
-// /addproperty
 const addPropertyCmd = new SlashCommandBuilder()
     .setName("addproperty")
     .setDescription("Add a faction property (Management only).")
@@ -115,8 +113,8 @@ async function loadFactions() {
     const set = new Set();
 
     for (const r of data) {
-        if (r[0]) set.add(r[0].trim());   // People table
-        if (r[5]) set.add(r[5].trim());   // Location table
+        if (r[0]) set.add(r[0].trim());   // Table 1
+        if (r[5]) set.add(r[5].trim());   // Table 2
     }
 
     cachedFactions = [...set];
@@ -179,7 +177,6 @@ client.on("interactionCreate", async interaction => {
             const rows = res.data.values || [];
             const data = rows.slice(1);
 
-            // People (A–E)
             const people = data
                 .filter(r => r[0]?.toLowerCase() === factionRequested)
                 .map(r => ({
@@ -189,7 +186,6 @@ client.on("interactionCreate", async interaction => {
                     leader: r[4]?.toUpperCase() === "TRUE"
                 }));
 
-            // Locations (F–H)
             const locRows = data.filter(r =>
                 r[5]?.toLowerCase() === factionRequested
             );
@@ -240,7 +236,6 @@ client.on("interactionCreate", async interaction => {
     // ─────────────── /addproperty
     if (interaction.commandName === "addproperty") {
 
-        // Role restriction
         const mgmtRole = interaction.guild.roles.cache.find(r => r.name === "Management");
         if (!interaction.member.roles.cache.has(mgmtRole?.id)) {
             return interaction.reply({
@@ -263,7 +258,6 @@ client.on("interactionCreate", async interaction => {
         }
 
         try {
-            // Load Sheet1 for duplicate protection
             const res = await sheets.spreadsheets.values.get({
                 spreadsheetId: GOOGLE_SHEET_ID,
                 range: "Sheet1!A1:H999"
@@ -284,10 +278,10 @@ client.on("interactionCreate", async interaction => {
                 });
             }
 
-            // ───────── Write to PropertyRewards (A–E), starting row 2
+            // ───── Write to PropertyRewards (append)
             await sheets.spreadsheets.values.append({
                 spreadsheetId: GOOGLE_SHEET_ID,
-                range: "PropertyRewards!A2:E",
+                range: "PropertyRewards!A:E",
                 valueInputOption: "USER_ENTERED",
                 requestBody: {
                     values: [[
@@ -300,10 +294,10 @@ client.on("interactionCreate", async interaction => {
                 }
             });
 
-            // ───────── Write to Sheet1 (F–H), starting row 2
+            // ───── Write to Sheet1 (append)
             await sheets.spreadsheets.values.append({
                 spreadsheetId: GOOGLE_SHEET_ID,
-                range: "Sheet1!F2:H",
+                range: "Sheet1!F:H",
                 valueInputOption: "USER_ENTERED",
                 requestBody: {
                     values: [[
