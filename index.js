@@ -53,13 +53,13 @@ async function deployCommands() {
     }
 }
 
-// Cache factions
+// Cached faction list
 let cachedFactions = [];
 
 async function loadFactions() {
     const res = await sheets.spreadsheets.values.get({
         spreadsheetId: GOOGLE_SHEET_ID,
-        range: "Sheet1!A1:I999"
+        range: "Sheet1!A1:H999"
     });
 
     const rows = res.data.values || [];
@@ -67,9 +67,9 @@ async function loadFactions() {
 
     const set = new Set();
 
-    for (const row of data) {
-        if (row[0]) set.add(row[0].trim()); // Person side
-        if (row[6]) set.add(row[6].trim()); // Location side
+    for (const r of data) {
+        if (r[0]) set.add(r[0].trim()); // People table factions
+        if (r[5]) set.add(r[5].trim()); // Location table factions
     }
 
     cachedFactions = [...set];
@@ -98,15 +98,15 @@ client.on("interactionCreate", async interaction => {
         await loadFactions();
 
     const focused = interaction.options.getFocused();
-    const filtered = cachedFactions
+    const list = cachedFactions
         .filter(f => f.toLowerCase().includes(focused.toLowerCase()))
         .slice(0, 25)
         .map(f => ({ name: f, value: f }));
 
-    await interaction.respond(filtered);
+    await interaction.respond(list);
 });
 
-// MAIN COMMAND
+// MAIN COMMAND EXECUTION
 client.on("interactionCreate", async interaction => {
     if (!interaction.isChatInputCommand()) return;
     if (interaction.commandName !== "factioninfo") return;
@@ -116,14 +116,14 @@ client.on("interactionCreate", async interaction => {
     try {
         const res = await sheets.spreadsheets.values.get({
             spreadsheetId: GOOGLE_SHEET_ID,
-            range: "Sheet1!A1:I999"
+            range: "Sheet1!A1:H999"
         });
 
         const rows = res.data.values || [];
         const data = rows.slice(1);
 
         //
-        // PEOPLE SECTION (A–E)
+        // PEOPLE TABLE (A–E)
         //
         const people = data
             .filter(r => r[0] && r[0].toLowerCase() === factionRequested)
@@ -135,19 +135,18 @@ client.on("interactionCreate", async interaction => {
             }));
 
         //
-        // LOCATION SECTION (G–I)
-        // ALWAYS include ALL addresses
+        // LOCATION TABLE (F–H)
         //
         const locationRows = data.filter(r =>
-            r[6] && r[6].toLowerCase() === factionRequested
+            r[5] && r[5].toLowerCase() === factionRequested
         );
 
         const hqs = [];
         const addresses = [];
 
-        for (const row of locationRows) {
-            const address = row[7] ? row[7].trim() : null;
-            const isHQ = row[8] && row[8].toUpperCase() === "TRUE";
+        for (const r of locationRows) {
+            const address = r[6] ? r[6].trim() : null; // Column G
+            const isHQ = r[7] && r[7].toUpperCase() === "TRUE"; // Column H
 
             if (!address) continue;
 
@@ -162,7 +161,7 @@ client.on("interactionCreate", async interaction => {
             .setTitle(`Faction Info: ${factionRequested}`)
             .setColor(0x2b6cb0);
 
-        // Members
+        // Members list
         if (people.length > 0) {
             embed.addFields({
                 name: "Members",
@@ -174,16 +173,18 @@ client.on("interactionCreate", async interaction => {
                     )
                     .join("\n")
             });
+        } else {
+            embed.addFields({
+                name: "Members",
+                value: "No members listed."
+            });
         }
 
         // Locations
         let locText = "";
 
-        for (const hq of hqs)
-            locText += `🏠 **HQ:** ${hq}\n`;
-
-        for (const addr of addresses)
-            locText += `📍 ${addr}\n`;
+        hqs.forEach(addr => locText += `🏠 **HQ:** ${addr}\n`);
+        addresses.forEach(addr => locText += `📍 ${addr}\n`);
 
         embed.addFields({
             name: "Locations",
