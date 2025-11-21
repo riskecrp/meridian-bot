@@ -248,7 +248,7 @@ if (interaction.commandName === "addproperty") {
     const type = interaction.options.getString("type");
 
     // Convert to BOOLEAN for Google Sheets checkbox
-    const fm_Provided = interaction.options.getString("fm_provided") === "TRUE";
+    const fm_provided = interaction.options.getString("fm_provided") === "TRUE";
 
     try {
         // Write to PropertyRewards!A:E
@@ -258,7 +258,7 @@ if (interaction.commandName === "addproperty") {
             range: `PropertyRewards!A${rewardsRow}:E${rewardsRow}`,
             valueInputOption: "USER_ENTERED",
             requestBody: {
-                values: [[date, faction, address, type, fm_Provided]]
+                values: [[date, faction, address, type, fm_provided]]
             }
         });
 
@@ -293,6 +293,7 @@ if (interaction.commandName === "addproperty") {
 // RUN BOT
 deployCommands();
 client.login(DISCORD_TOKEN);
+
 
 
 
