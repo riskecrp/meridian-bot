@@ -283,12 +283,12 @@ if (interaction.commandName === "addproperty") {
             content: "✅ Property recorded and added to faction database.",
             ephemeral: true
         });
-    } catch (err) {
-        console.error("ADDPROPERTY ERROR:", err);
-        return interaction.reply("There was an error updating the Google Sheet.");
+        } catch (err) {
+            console.error("ADDPROPERTY ERROR:", err);
+            return interaction.reply("There was an error updating the Google Sheet.");
+        }
     }
-}
-
+});
 
 // RUN BOT
 deployCommands();
