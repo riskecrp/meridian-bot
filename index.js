@@ -53,10 +53,10 @@ async function deployCommands() {
     }
 }
 
-// Cache factions so we don't re-ping Google constantly
+// Cache factions so we don't re-query constantly
 let cachedFactions = [];
 
-// Load faction names from sheet (Column A and Column G)
+// Load faction list from Columns A and G
 async function loadFactions(sheetId) {
     const res = await sheets.spreadsheets.values.get({
         spreadsheetId: sheetId,
@@ -69,8 +69,8 @@ async function loadFactions(sheetId) {
     const factionsSet = new Set();
 
     for (const row of data) {
-        if (row[0]) factionsSet.add(row[0].trim());
-        if (row[6]) factionsSet.add(row[6].trim());
+        if (row[0]) factionsSet.add(row[0].trim());  // Person section
+        if (row[6]) factionsSet.add(row[6].trim());  // Location section
     }
 
     cachedFactions = [...factionsSet].filter(f => f.length > 0);
@@ -85,7 +85,7 @@ const client = new Client({
 client.once("ready", () => {
     console.log(`Logged in as ${client.user.tag}`);
 
-    // Set status
+    // Set bot status
     client.user.setPresence({
         activities: [
             {
@@ -122,8 +122,8 @@ client.on("interactionCreate", async interaction => {
     if (!interaction.isChatInputCommand()) return;
 
     if (interaction.commandName === "factioninfo") {
-        const sheetId = process.env.GOOGLE_SHEET_ID;
         const factionRequested = interaction.options.getString("faction").toLowerCase();
+        const sheetId = process.env.GOOGLE_SHEET_ID;
 
         try {
             const res = await sheets.spreadsheets.values.get({
@@ -132,14 +132,10 @@ client.on("interactionCreate", async interaction => {
             });
 
             const rows = res.data.values || [];
-            if (rows.length < 2) {
-                return interaction.reply("No data found in the sheet.");
-            }
-
             const data = rows.slice(1);
 
             //
-            // PEOPLE (Columns A–E)
+            // PEOPLE SECTION (A–E)
             //
             const people = data
                 .filter(r => r[0] && r[0].toLowerCase() === factionRequested)
@@ -151,14 +147,13 @@ client.on("interactionCreate", async interaction => {
                 }));
 
             //
-            // LOCATIONS (Columns G–I)
-            // — Collect *ALL* addresses associated with faction
+            // LOCATIONS SECTION (G–I)
             //
             const locationRows = data.filter(r =>
                 r[6] && r[6].toLowerCase() === factionRequested
             );
 
-            let hqAddress = null;
+            const hqAddresses = [];
             const otherLocations = [];
 
             for (const row of locationRows) {
@@ -168,7 +163,7 @@ client.on("interactionCreate", async interaction => {
                 if (!address) continue;
 
                 if (isHQ) {
-                    hqAddress = address;
+                    hqAddresses.push(address);
                 } else {
                     otherLocations.push(address);
                 }
@@ -182,7 +177,7 @@ client.on("interactionCreate", async interaction => {
                 .setColor(0x5e81ac);
 
             //
-            // MEMBERS SECTION
+            // MEMBERS
             //
             if (people.length > 0) {
                 const memberText = people
@@ -197,14 +192,16 @@ client.on("interactionCreate", async interaction => {
             }
 
             //
-            // LOCATIONS SECTION
+            // LOCATIONS (ALL ADDRESSES + MULTIPLE HQ)
             //
             let locationText = "";
 
-            if (hqAddress) {
-                locationText += `🏠 **HQ:** ${hqAddress}\n`;
+            // HQs first
+            for (const hq of hqAddresses) {
+                locationText += `🏠 **HQ:** ${hq}\n`;
             }
 
+            // Other locations
             for (const addr of otherLocations) {
                 locationText += `📍 ${addr}\n`;
             }
