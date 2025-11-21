@@ -17,7 +17,7 @@ const GOOGLE_CLIENT_EMAIL = process.env.GOOGLE_CLIENT_EMAIL;
 const GOOGLE_PRIVATE_KEY = process.env.GOOGLE_PRIVATE_KEY;
 const GOOGLE_SHEET_ID = process.env.GOOGLE_SHEET_ID;
 
-// Google Sheets Authentication
+// Auth for Google Sheets
 const auth = new google.auth.JWT(
     GOOGLE_CLIENT_EMAIL,
     null,
@@ -27,7 +27,7 @@ const auth = new google.auth.JWT(
 
 const sheets = google.sheets({ version: "v4", auth });
 
-// Slash command definition
+// Slash command
 const factionInfoCmd = new SlashCommandBuilder()
     .setName("factioninfo")
     .setDescription("Look up faction information from the Meridian database.")
@@ -53,7 +53,7 @@ async function deployCommands() {
     }
 }
 
-// Cached faction list
+// Cache the faction list
 let cachedFactions = [];
 
 async function loadFactions() {
@@ -68,8 +68,8 @@ async function loadFactions() {
     const set = new Set();
 
     for (const r of data) {
-        if (r[0]) set.add(r[0].trim()); // People table factions
-        if (r[5]) set.add(r[5].trim()); // Location table factions
+        if (r[0]) set.add(r[0].trim()); // People table
+        if (r[5]) set.add(r[5].trim()); // Location table
     }
 
     cachedFactions = [...set];
@@ -106,7 +106,7 @@ client.on("interactionCreate", async interaction => {
     await interaction.respond(list);
 });
 
-// MAIN COMMAND EXECUTION
+// MAIN COMMAND
 client.on("interactionCreate", async interaction => {
     if (!interaction.isChatInputCommand()) return;
     if (interaction.commandName !== "factioninfo") return;
@@ -114,7 +114,7 @@ client.on("interactionCreate", async interaction => {
     const factionRequested = interaction.options.getString("faction").toLowerCase();
 
     try {
-        const res = await sheets.spreadsreadsheets.values.get({
+        const res = await sheets.spreadsheets.values.get({
             spreadsheetId: GOOGLE_SHEET_ID,
             range: "Sheet1!A1:H999"
         });
@@ -123,7 +123,7 @@ client.on("interactionCreate", async interaction => {
         const data = rows.slice(1);
 
         //
-        // PEOPLE TABLE (A–E)
+        // PEOPLE TABLE — Columns A–E (0–4)
         //
         const people = data
             .filter(r => r[0] && r[0].toLowerCase() === factionRequested)
@@ -135,7 +135,7 @@ client.on("interactionCreate", async interaction => {
             }));
 
         //
-        // LOCATION TABLE (F–H) — FINAL CONFIRMED INDEXES
+        // LOCATION TABLE — Columns F–H (5–7)
         //
         const locationRows = data.filter(r =>
             r[5] && r[5].toLowerCase() === factionRequested
@@ -161,7 +161,7 @@ client.on("interactionCreate", async interaction => {
             .setTitle(`Faction Info: ${factionRequested}`)
             .setColor(0x2b6cb0);
 
-        // Members list
+        // Members
         if (people.length > 0) {
             embed.addFields({
                 name: "Members",
@@ -169,9 +169,9 @@ client.on("interactionCreate", async interaction => {
                     .map(p =>
                         `**${p.character}**${p.leader ? " (Leader)" : ""}\n` +
                         `📞 ${p.phone}\n` +
-                        `🏠 ${p.personalAddress}\n`
+                        `🏠 ${p.personalAddress}`
                     )
-                    .join("\n")
+                    .join("\n\n")
             });
         } else {
             embed.addFields({
