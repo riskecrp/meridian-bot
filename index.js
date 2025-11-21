@@ -167,4 +167,129 @@ async function findNextRowRewards() {
 }
 
 // COMMAND HANDLER
-client.on("interactionCreate", async interaction =>
+client.on("interactionCreate", async interaction => {
+    if (!interaction.isChatInputCommand()) return;
+
+    // /factioninfo
+    if (interaction.commandName === "factioninfo") {
+        const factionRequested = interaction.options.getString("faction").toLowerCase();
+
+        try {
+            const res = await sheets.spreadsheets.values.get({
+                spreadsheetId: GOOGLE_SHEET_ID,
+                range: "Sheet1!A1:H999"
+            });
+
+            const rows = res.data.values || [];
+            const data = rows.slice(1);
+
+            const people = data
+                .filter(r => r[0] && r[0].toLowerCase() === factionRequested)
+                .map(r => ({
+                    character: r[1] || "N/A",
+                    phone: r[2] || "N/A",
+                    personalAddress: r[3] || "N/A",
+                    leader: r[4] && r[4].toUpperCase() === "TRUE"
+                }));
+
+            const locationRows = data.filter(r =>
+                r[5] && r[5].toLowerCase() === factionRequested
+            );
+
+            let hqs = [];
+            let addresses = [];
+
+            for (const r of locationRows) {
+                const address = r[6] || null;
+                const isHQ = r[7] && r[7].toUpperCase() === "TRUE";
+
+                if (!address) continue;
+
+                if (isHQ) hqs.push(address);
+                else addresses.push(address);
+            }
+
+            const embed = new EmbedBuilder()
+                .setColor(0x2b6cb0)
+                .setTitle(`Faction Info: ${factionRequested}`);
+
+            embed.addFields({
+                name: "Members",
+                value: people.length
+                    ? people
+                          .map(p =>
+                              `**${p.character}**${p.leader ? " (Leader)" : ""}\n📞 ${p.phone}\n🏠 ${p.personalAddress}`
+                          )
+                          .join("\n\n")
+                    : "No members listed."
+            });
+
+            let locText = "";
+            hqs.forEach(addr => (locText += `🏠 **HQ:** ${addr}\n`));
+            addresses.forEach(addr => (locText += `📍 ${addr}\n`));
+
+            embed.addFields({
+                name: "Locations",
+                value: locText || "No addresses listed."
+            });
+
+            return interaction.reply({ embeds: [embed] });
+        } catch (err) {
+            console.error("FACTIONINFO ERROR:", err);
+            return interaction.reply("There was an error accessing the Google Sheet.");
+        }
+    }
+
+    // /addproperty
+    if (interaction.commandName === "addproperty") {
+        const date = interaction.options.getString("date");
+        const faction = interaction.options.getString("faction");
+        const address = interaction.options.getString("address");
+        const type = interaction.options.getString("type");
+        const fmProvided = interaction.options.getString("fmprovided"); // "TRUE" or "FALSE"
+
+        try {
+            // Write to PropertyRewards!A:E
+            const rewardsRow = await findNextRowRewards();
+            await sheets.spreadsheets.values.update({
+                spreadsheetId: GOOGLE_SHEET_ID,
+                range: `PropertyRewards!A${rewardsRow}:E${rewardsRow}`,
+                valueInputOption: "USER_ENTERED",
+                requestBody: {
+                    values: [[date, faction, address, type, fmProvided]]
+                }
+            });
+
+            // Write to Sheet1 F:H
+            const row = await findNextRowSheet1();
+            await sheets.spreadsheets.values.update({
+                spreadsheetId: GOOGLE_SHEET_ID,
+                range: `Sheet1!F${row}:H${row}`,
+                valueInputOption: "USER_ENTERED",
+                requestBody: {
+                    values: [
+                        [
+                            faction,                // F
+                            address,                // G
+                            type === "HQ" ? "TRUE" : "FALSE" // H
+                        ]
+                    ]
+                }
+            });
+
+            return interaction.reply({
+                content: "✅ Property recorded and added to faction database.",
+                ephemeral: true
+            });
+        } catch (err) {
+            console.error("ADDPROPERTY ERROR:", err);
+            return interaction.reply("There was an error updating the Google Sheet.");
+        }
+    }
+});
+
+// RUN BOT
+deployCommands();
+client.login(DISCORD_TOKEN);
+
+
