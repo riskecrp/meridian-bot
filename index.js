@@ -17,7 +17,7 @@ const GOOGLE_CLIENT_EMAIL = process.env.GOOGLE_CLIENT_EMAIL;
 const GOOGLE_PRIVATE_KEY = process.env.GOOGLE_PRIVATE_KEY;
 const GOOGLE_SHEET_ID = process.env.GOOGLE_SHEET_ID;
 
-// Auth for Google Sheets
+// Google Sheets Authentication
 const auth = new google.auth.JWT(
     GOOGLE_CLIENT_EMAIL,
     null,
@@ -27,7 +27,7 @@ const auth = new google.auth.JWT(
 
 const sheets = google.sheets({ version: "v4", auth });
 
-// Slash command
+// Slash command definition
 const factionInfoCmd = new SlashCommandBuilder()
     .setName("factioninfo")
     .setDescription("Look up faction information from the Meridian database.")
@@ -53,7 +53,7 @@ async function deployCommands() {
     }
 }
 
-// Cache the faction list
+// Cached faction list
 let cachedFactions = [];
 
 async function loadFactions() {
@@ -126,7 +126,9 @@ client.on("interactionCreate", async interaction => {
         // PEOPLE TABLE — Columns A–E (0–4)
         //
         const people = data
-            .filter(r => r[0] && r[0].toLowerCase() === factionRequested)
+            .filter(r =>
+                r[0] && r[0].toLowerCase().trim() === factionRequested
+            )
             .map(r => ({
                 character: r[1] || "N/A",
                 phone: r[2] || "N/A",
@@ -138,7 +140,7 @@ client.on("interactionCreate", async interaction => {
         // LOCATION TABLE — Columns F–H (5–7)
         //
         const locationRows = data.filter(r =>
-            r[5] && r[5].toLowerCase() === factionRequested
+            r[5] && r[5].toLowerCase().trim() === factionRequested
         );
 
         const hqs = [];
@@ -176,7 +178,7 @@ client.on("interactionCreate", async interaction => {
         } else {
             embed.addFields({
                 name: "Members",
-                value: "No members listed."
+                value: "(This faction has no registered personnel.)"
             });
         }
 
