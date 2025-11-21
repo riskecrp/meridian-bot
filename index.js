@@ -215,31 +215,43 @@ client.on("interactionCreate", async interaction => {
                 else addresses.push(address);
             }
 
-            const embed = new EmbedBuilder()
+           // --------------------
+// STYLE C — SINGLE FIELD EMBED
+// --------------------
+
+// Remove duplicates from HQs and addresses
+const uniqueHQs = [...new Set(hqs)];
+const uniqueAddrs = [...new Set(addresses)];
+
+const embed = new EmbedBuilder()
     .setColor(0x2b6cb0)
-    .setTitle(`Faction Information: ${factionRequested}`)
-    .setDescription(
-        `### 👥 Members\n` +
-        (
-            people.length
-                ? people.map(p =>
-                    `• **${p.character}**${p.leader ? " ⭐" : ""}\n` +
-                    `  └ 📞 ${p.phone}\n` +
-                    `  └ 🏠 ${p.personalAddress}`
-                ).join("\n")
-                : "_No members listed._"
-        )
-        +
-        `\n\n### 📍 Locations\n` +
-        (
-            hqs.length || addresses.length
-                ? [
-                    ...hqs.map(a => `• 🏠 **HQ:** ${a}`),
-                    ...addresses.map(a => `• 📍 ${a}`)
-                ].join("\n")
-                : "_No locations listed._"
-        )
-    );
+    .setTitle(`━━━━━━━━━━━━━━━━━━━━━━━━━━\n🗂️  MERIDIAN DATABASE ENTRY\nFaction: **${interaction.options.getString("faction")}**\n━━━━━━━━━━━━━━━━━━━━━━━━━━`)
+    .addFields({
+        name: "⠀",
+        value:
+            `### 👥 Command Members\n` +
+            (
+                people.length
+                    ? people.map(p =>
+                        `• **${p.character}**${p.leader ? " (Leader)" : ""}\n` +
+                        `  • Phone: ${p.phone}\n` +
+                        `  • Residence: ${p.personalAddress}`
+                    ).join("\n")
+                    : "_No command members listed._"
+            )
+            +
+            `\n\n### 🏛️ Known Faction Properties\n` +
+            (
+                uniqueHQs.length || uniqueAddrs.length
+                    ? [
+                        ...uniqueHQs.map(a => `• **HQ:** ${a}`),
+                        ...uniqueAddrs.map(a => `• Property: ${a}`)
+                    ].join("\n")
+                    : "_No faction properties listed._"
+            )
+            +
+            `\n━━━━━━━━━━━━━━━━━━━━━━━━━━`
+    });
 
             let locText = "";
             hqs.forEach(addr => locText += `🏠 **HQ:** ${addr}\n`);
@@ -313,4 +325,5 @@ client.on("interactionCreate", async interaction => {
 // ───────────────────────────────────────────────────────────
 deployCommands();
 client.login(DISCORD_TOKEN);
+
 
