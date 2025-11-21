@@ -235,13 +235,13 @@ client.on("interactionCreate", async interaction => {
                 .setTitle(
                     `━━━━━━━━━━━━━━━━━━━━━━━━━━\n` +
                     `🗂️  MERIDIAN DATABASE ENTRY\n` +
-                    `Faction: **${interaction.options.getString("faction")}**\n` +
+                    `Organization: **${interaction.options.getString("faction")}**\n` +
                     `━━━━━━━━━━━━━━━━━━━━━━━━━━`
                 )
                 .addFields({
                     name: "⠀",
                     value:
-                        `### 👥 Command Members\n` +
+                        `Known Command Members\n` +
                         (
                             people.length
                                 ? people.map(p =>
@@ -252,12 +252,12 @@ client.on("interactionCreate", async interaction => {
                                 : "_No command members listed._"
                         )
                         +
-                        `\n### 🏛️ Known Org Properties\n` +
+                        `\ Known Organization Properties\n` +
                         (
                             uniqueHQs.length || uniqueAddrs.length
                                 ? [
-                                    ...uniqueHQs.map(a => `• **HQ:** ${a}`),
-                                    ...uniqueAddrs.map(a => `• Property: ${a}`)
+                                    ...uniqueHQs.map(a => `🏠 **HQ:** ${a}`),
+                                    ...uniqueAddrs.map(a => `📍 Property: ${a}`)
                                 ].join("\n")
                                 : "_No faction properties listed._"
                         ) +
@@ -330,3 +330,4 @@ client.on("interactionCreate", async interaction => {
 
 deployCommands();
 client.login(DISCORD_TOKEN);
+
