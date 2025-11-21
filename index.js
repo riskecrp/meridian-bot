@@ -240,56 +240,59 @@ client.on("interactionCreate", async interaction => {
         }
     }
 
-    // /addproperty
-    if (interaction.commandName === "addproperty") {
-        const date = interaction.options.getString("date");
-        const faction = interaction.options.getString("faction");
-        const address = interaction.options.getString("address");
-        const type = interaction.options.getString("type");
-        const fmProvided = interaction.options.getString("fmprovided"); // "TRUE" or "FALSE"
+   // /addproperty
+if (interaction.commandName === "addproperty") {
+    const date = interaction.options.getString("date");
+    const faction = interaction.options.getString("faction");
+    const address = interaction.options.getString("address");
+    const type = interaction.options.getString("type");
 
-        try {
-            // Write to PropertyRewards!A:E
-            const rewardsRow = await findNextRowRewards();
-            await sheets.spreadsheets.values.update({
-                spreadsheetId: GOOGLE_SHEET_ID,
-                range: `PropertyRewards!A${rewardsRow}:E${rewardsRow}`,
-                valueInputOption: "USER_ENTERED",
-                requestBody: {
-                    values: [[date, faction, address, type, fmProvided]]
-                }
-            });
+    // Convert to BOOLEAN for Google Sheets checkbox
+    const fmProvided = interaction.options.getString("fmprovided") === "TRUE";
 
-            // Write to Sheet1 F:H
-            const row = await findNextRowSheet1();
-            await sheets.spreadsheets.values.update({
-                spreadsheetId: GOOGLE_SHEET_ID,
-                range: `Sheet1!F${row}:H${row}`,
-                valueInputOption: "USER_ENTERED",
-                requestBody: {
-                    values: [
-                        [
-                            faction,                // F
-                            address,                // G
-                            type === "HQ" ? "TRUE" : "FALSE" // H
-                        ]
+    try {
+        // Write to PropertyRewards!A:E
+        const rewardsRow = await findNextRowRewards();
+        await sheets.spreadsheets.values.update({
+            spreadsheetId: GOOGLE_SHEET_ID,
+            range: `PropertyRewards!A${rewardsRow}:E${rewardsRow}`,
+            valueInputOption: "USER_ENTERED",
+            requestBody: {
+                values: [[date, faction, address, type, fmProvided]]
+            }
+        });
+
+        // Write to Sheet1 F:H
+        const row = await findNextRowSheet1();
+        await sheets.spreadsheets.values.update({
+            spreadsheetId: GOOGLE_SHEET_ID,
+            range: `Sheet1!F${row}:H${row}`,
+            valueInputOption: "USER_ENTERED",
+            requestBody: {
+                values: [
+                    [
+                        faction,                   
+                        address,                   
+                        type === "HQ" ? true : false
                     ]
-                }
-            });
+                ]
+            }
+        });
 
-            return interaction.reply({
-                content: "✅ Property recorded and added to faction database.",
-                ephemeral: true
-            });
-        } catch (err) {
-            console.error("ADDPROPERTY ERROR:", err);
-            return interaction.reply("There was an error updating the Google Sheet.");
-        }
+        return interaction.reply({
+            content: "✅ Property recorded and added to faction database.",
+            ephemeral: true
+        });
+    } catch (err) {
+        console.error("ADDPROPERTY ERROR:", err);
+        return interaction.reply("There was an error updating the Google Sheet.");
     }
-});
+}
+
 
 // RUN BOT
 deployCommands();
 client.login(DISCORD_TOKEN);
+
 
 
