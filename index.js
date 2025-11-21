@@ -53,7 +53,7 @@ async function deployCommands() {
     }
 }
 
-// Cache factions so we don't re-ping Google every time
+// Cache factions so we don't re-ping Google constantly
 let cachedFactions = [];
 
 // Load faction names from sheet (Column A and Column G)
@@ -85,7 +85,7 @@ const client = new Client({
 client.once("ready", () => {
     console.log(`Logged in as ${client.user.tag}`);
 
-    // Set presence/status message
+    // Set status
     client.user.setPresence({
         activities: [
             {
@@ -122,8 +122,8 @@ client.on("interactionCreate", async interaction => {
     if (!interaction.isChatInputCommand()) return;
 
     if (interaction.commandName === "factioninfo") {
-        const factionRequested = interaction.options.getString("faction").toLowerCase();
         const sheetId = process.env.GOOGLE_SHEET_ID;
+        const factionRequested = interaction.options.getString("faction").toLowerCase();
 
         try {
             const res = await sheets.spreadsheets.values.get({
@@ -131,14 +131,16 @@ client.on("interactionCreate", async interaction => {
                 range: "Sheet1!A1:I999"
             });
 
-            const rows = res.data.values;
-            if (!rows || rows.length < 2) {
+            const rows = res.data.values || [];
+            if (rows.length < 2) {
                 return interaction.reply("No data found in the sheet.");
             }
 
             const data = rows.slice(1);
 
-            // People (A–E)
+            //
+            // PEOPLE (Columns A–E)
+            //
             const people = data
                 .filter(r => r[0] && r[0].toLowerCase() === factionRequested)
                 .map(r => ({
@@ -148,16 +150,19 @@ client.on("interactionCreate", async interaction => {
                     leader: r[4] === "TRUE"
                 }));
 
-            // Locations (G–I)
+            //
+            // LOCATIONS (Columns G–I)
+            // — Collect *ALL* addresses associated with faction
+            //
             const locationRows = data.filter(r =>
                 r[6] && r[6].toLowerCase() === factionRequested
             );
 
             let hqAddress = null;
-            const otherLocations = new Set();
+            const otherLocations = [];
 
             for (const row of locationRows) {
-                const address = row[7] || null;
+                const address = row[7] ? row[7].trim() : null;
                 const isHQ = row[8] === "TRUE";
 
                 if (!address) continue;
@@ -165,27 +170,35 @@ client.on("interactionCreate", async interaction => {
                 if (isHQ) {
                     hqAddress = address;
                 } else {
-                    otherLocations.add(address);
+                    otherLocations.push(address);
                 }
             }
 
-            // Build embed
+            //
+            // BUILD EMBED
+            //
             const embed = new EmbedBuilder()
                 .setTitle(`Faction Info: ${factionRequested}`)
                 .setColor(0x5e81ac);
 
-            // Members section
+            //
+            // MEMBERS SECTION
+            //
             if (people.length > 0) {
-                const memberText = people.map(p =>
-                    `**${p.character}**${p.leader ? " (Leader)" : ""}\n` +
-                    `📞 ${p.phone}\n` +
-                    `🏠 ${p.personAddress}\n`
-                ).join("\n");
+                const memberText = people
+                    .map(p =>
+                        `**${p.character}**${p.leader ? " (Leader)" : ""}\n` +
+                        `📞 ${p.phone}\n` +
+                        `🏠 ${p.personAddress}\n`
+                    )
+                    .join("\n");
 
                 embed.addFields({ name: "Members", value: memberText });
             }
 
-            // Locations section
+            //
+            // LOCATIONS SECTION
+            //
             let locationText = "";
 
             if (hqAddress) {
@@ -209,6 +222,6 @@ client.on("interactionCreate", async interaction => {
     }
 });
 
-// Start the bot
+// Start bot
 deployCommands();
 client.login(DISCORD_TOKEN);
