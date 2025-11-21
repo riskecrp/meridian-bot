@@ -12,8 +12,8 @@ import { google } from "googleapis";
 
 // ENV VARS (MUST MATCH RAILWAY)
 const DISCORD_TOKEN = process.env.DISCORD_TOKEN;
-const CLIENT_ID = process.env.CLIENT_ID;     // FIXED
-const GUILD_ID = process.env.GUILD_ID;       // FIXED
+const CLIENT_ID = process.env.CLIENT_ID;
+const GUILD_ID = process.env.GUILD_ID;
 const GOOGLE_CLIENT_EMAIL = process.env.GOOGLE_CLIENT_EMAIL;
 const GOOGLE_PRIVATE_KEY = process.env.GOOGLE_PRIVATE_KEY.replace(/\\n/g, "\n");
 const GOOGLE_SHEET_ID = process.env.GOOGLE_SHEET_ID;
@@ -28,11 +28,10 @@ const auth = new google.auth.JWT(
 
 const sheets = google.sheets({ version: "v4", auth });
 
-// ───────────────────────────────────────────────────────────
+// ───────────────────────────────────────────────
 // SLASH COMMANDS
-// ───────────────────────────────────────────────────────────
+// ───────────────────────────────────────────────
 
-// /factioninfo
 const factionInfoCmd = new SlashCommandBuilder()
     .setName("factioninfo")
     .setDescription("Look up faction information from the Meridian database.")
@@ -43,7 +42,6 @@ const factionInfoCmd = new SlashCommandBuilder()
             .setAutocomplete(true)
     );
 
-// /addproperty (BOOLEAN VERSION)
 const addPropertyCmd = new SlashCommandBuilder()
     .setName("addproperty")
     .setDescription("Add a property reward and update the faction database.")
@@ -82,9 +80,10 @@ const addPropertyCmd = new SlashCommandBuilder()
 
 const rest = new REST({ version: "10" }).setToken(DISCORD_TOKEN);
 
-// ───────────────────────────────────────────────────────────
+// ───────────────────────────────────────────────
 // DEPLOY COMMANDS
-// ───────────────────────────────────────────────────────────
+// ───────────────────────────────────────────────
+
 async function deployCommands() {
     try {
         await rest.put(
@@ -97,9 +96,10 @@ async function deployCommands() {
     }
 }
 
-// ───────────────────────────────────────────────────────────
+// ───────────────────────────────────────────────
 // AUTOCOMPLETE SUPPORT
-// ───────────────────────────────────────────────────────────
+// ───────────────────────────────────────────────
+
 let cachedFactions = [];
 
 async function loadFactions() {
@@ -119,25 +119,26 @@ async function loadFactions() {
     cachedFactions = [...set];
 }
 
-// ───────────────────────────────────────────────────────────
+// ───────────────────────────────────────────────
 // DISCORD CLIENT
-// ───────────────────────────────────────────────────────────
+// ───────────────────────────────────────────────
+
 const client = new Client({
     intents: [GatewayIntentBits.Guilds]
 });
 
 client.once("ready", () => {
     console.log(`Logged in as ${client.user.tag}`);
-
     client.user.setPresence({
         activities: [{ name: "Waiting for associate request...", type: 3 }],
         status: "online"
     });
 });
 
-// ───────────────────────────────────────────────────────────
+// ───────────────────────────────────────────────
 // AUTOCOMPLETE HANDLER
-// ───────────────────────────────────────────────────────────
+// ───────────────────────────────────────────────
+
 client.on("interactionCreate", async interaction => {
     if (!interaction.isAutocomplete()) return;
 
@@ -152,9 +153,10 @@ client.on("interactionCreate", async interaction => {
     interaction.respond(suggestions);
 });
 
-// ───────────────────────────────────────────────────────────
-// FIND NEXT ROW HELPERS
-// ───────────────────────────────────────────────────────────
+// ───────────────────────────────────────────────
+// HELPERS
+// ───────────────────────────────────────────────
+
 async function findNextRowSheet1() {
     const res = await sheets.spreadsheets.values.get({
         spreadsheetId: GOOGLE_SHEET_ID,
@@ -171,13 +173,16 @@ async function findNextRowRewards() {
     return (res.data.values || []).length + 1;
 }
 
-// ───────────────────────────────────────────────────────────
+// ───────────────────────────────────────────────
 // COMMAND HANDLER
-// ───────────────────────────────────────────────────────────
+// ───────────────────────────────────────────────
+
 client.on("interactionCreate", async interaction => {
     if (!interaction.isChatInputCommand()) return;
 
+    // ────────────────
     // /factioninfo
+    // ────────────────
     if (interaction.commandName === "factioninfo") {
         const factionRequested = interaction.options.getString("faction").toLowerCase();
 
@@ -190,6 +195,7 @@ client.on("interactionCreate", async interaction => {
             const rows = res.data.values || [];
             const data = rows.slice(1);
 
+            // People (Command Members)
             const people = data
                 .filter(r => r[0] && r[0].toLowerCase() === factionRequested)
                 .map(r => ({
@@ -199,6 +205,7 @@ client.on("interactionCreate", async interaction => {
                     leader: r[4]?.toUpperCase() === "TRUE"
                 }));
 
+            // Properties
             const locationRows = data.filter(r =>
                 r[5] && r[5].toLowerCase() === factionRequested
             );
@@ -207,70 +214,77 @@ client.on("interactionCreate", async interaction => {
             let addresses = [];
 
             for (const r of locationRows) {
-                const address = r[6];
+                const addr = r[6];
                 const isHQ = r[7] === "TRUE";
 
-                if (!address) continue;
-                if (isHQ) hqs.push(address);
-                else addresses.push(address);
+                if (!addr) continue;
+                if (isHQ) hqs.push(addr);
+                else addresses.push(addr);
             }
 
-           // --------------------
-// STYLE C — SINGLE FIELD EMBED
-// --------------------
+            // Remove duplicates
+            const uniqueHQs = [...new Set(hqs)];
+            const uniqueAddrs = [...new Set(addresses.filter(a => !uniqueHQs.includes(a)))];
 
-// Remove duplicates, prevent HQ appearing twice
-const uniqueHQs = [...new Set(hqs)];
-const uniqueAddrs = [...new Set(addresses.filter(a => !uniqueHQs.includes(a)))];
+            // ────────────────
+            // STYLE C EMBED
+            // ────────────────
 
-// STYLE C — ONE FIELD OUTPUT
-const embed = new EmbedBuilder()
-    .setColor(0x2b6cb0)
-    .setTitle(
-        `━━━━━━━━━━━━━━━━━━━━━━━━━━\n` +
-        `🗂️  MERIDIAN DATABASE ENTRY\n` +
-        `Faction: **${interaction.options.getString("faction")}**\n` +
-        `━━━━━━━━━━━━━━━━━━━━━━━━━━`
-    )
-    .addFields({
-        name: "⠀",
-        value:
-            `### 👥 Command Members\n` +
-            (
-                people.length
-                    ? people.map(p =>
-                        `**${p.character}**${p.leader ? " (Leader)" : ""}\n` +
-                        `  • Phone: ${p.phone}\n` +
-                        `  • Residence: ${p.personalAddress}\n`
-                    ).join("\n")
-                    : "_No command members listed._"
-            )
-            +
-            `\n🏛️ Known Org Properties\n` +
-            (
-                uniqueHQs.length || uniqueAddrs.length
-                    ? [
-                        ...uniqueHQs.map(a => `• **HQ:** ${a}`),
-                        ...uniqueAddrs.map(a => `• Property: ${a}`)
-                    ].join("\n")
-                    : "_No faction properties listed._"
-            )
-            +
-            `\n━━━━━━━━━━━━━━━━━━━━━━━━━━`
-    });
+            const embed = new EmbedBuilder()
+                .setColor(0x2b6cb0)
+                .setTitle(
+                    `━━━━━━━━━━━━━━━━━━━━━━━━━━\n` +
+                    `🗂️  MERIDIAN DATABASE ENTRY\n` +
+                    `Faction: **${interaction.options.getString("faction")}**\n` +
+                    `━━━━━━━━━━━━━━━━━━━━━━━━━━`
+                )
+                .addFields({
+                    name: "⠀",
+                    value:
+                        `### 👥 Command Members\n` +
+                        (
+                            people.length
+                                ? people.map(p =>
+                                    `**${p.character}**${p.leader ? " (Leader)" : ""}\n` +
+                                    `  • Phone: ${p.phone}\n` +
+                                    `  • Residence: ${p.personalAddress}\n`
+                                ).join("\n")
+                                : "_No command members listed._"
+                        )
+                        +
+                        `\n### 🏛️ Known Org Properties\n` +
+                        (
+                            uniqueHQs.length || uniqueAddrs.length
+                                ? [
+                                    ...uniqueHQs.map(a => `• **HQ:** ${a}`),
+                                    ...uniqueAddrs.map(a => `• Property: ${a}`)
+                                ].join("\n")
+                                : "_No faction properties listed._"
+                        ) +
+                        `\n━━━━━━━━━━━━━━━━━━━━━━━━━━`
+                });
 
+            return interaction.reply({ embeds: [embed] });
 
+        } catch (err) {
+            console.error("FACTIONINFO ERROR:", err);
+            return interaction.reply("There was an error accessing the Google Sheet.");
+        }
+    }
+
+    // ────────────────
     // /addproperty
-    if (interaction.commandName === "addproperty") {
+    // ────────────────
 
+    if (interaction.commandName === "addproperty") {
         const date = interaction.options.getString("date");
         const faction = interaction.options.getString("faction");
         const address = interaction.options.getString("address");
         const type = interaction.options.getString("type");
-        const fmProvided = interaction.options.getBoolean("fm_provided"); // BOOLEAN ✔
+        const fmProvided = interaction.options.getBoolean("fm_provided");
 
         try {
-            // Write to PropertyRewards
+            // PropertyRewards
             const rewardsRow = await findNextRowRewards();
             await sheets.spreadsheets.values.update({
                 spreadsheetId: GOOGLE_SHEET_ID,
@@ -281,7 +295,7 @@ const embed = new EmbedBuilder()
                 }
             });
 
-            // Write to Sheet1
+            // Sheet1
             const row = await findNextRowSheet1();
             await sheets.spreadsheets.values.update({
                 spreadsheetId: GOOGLE_SHEET_ID,
@@ -310,11 +324,9 @@ const embed = new EmbedBuilder()
     }
 });
 
-// ───────────────────────────────────────────────────────────
+// ───────────────────────────────────────────────
 // START BOT
-// ───────────────────────────────────────────────────────────
+// ───────────────────────────────────────────────
+
 deployCommands();
 client.login(DISCORD_TOKEN);
-
-
-
