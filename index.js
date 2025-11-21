@@ -231,38 +231,41 @@ client.on("interactionCreate", async interaction => {
             // ────────────────
 
             const embed = new EmbedBuilder()
-                .setColor(0x2b6cb0)
-                .setTitle(
-                    `━━━━━━━━━━━━━━━━━━━━━━━━━━\n` +
-                    `🗂️  MERIDIAN DATABASE ENTRY\n` +
-                    `Organization: **${interaction.options.getString("faction")}**\n` +
-                    `━━━━━━━━━━━━━━━━━━━━━━━━━━`
-                )
-                .addFields({
-                    name: "⠀",
-                    value:
-                        `Known Command Members\n` +
-                        (
-                            people.length
-                                ? people.map(p =>
-                                    `**${p.character}**${p.leader ? " (Leader)" : ""}\n` +
-                                    `  • Phone: ${p.phone}\n` +
-                                    `  • Residence: ${p.personalAddress}\n`
-                                ).join("\n")
-                                : "_No command members listed._"
+    .setColor(0x2b6cb0)
+    .setTitle(
+        `━━━━━━━━━━━━━━━━━━━━━━━━━━\n` +
+        `🗂️  **MERIDIAN DATABASE ENTRY**\n` +
+        `**Organization: ${interaction.options.getString("faction")}**\n` +
+        `━━━━━━━━━━━━━━━━━━━━━━━━━━`
+    )
+    .addFields({
+        name: "⠀",
+        value:
+            `__**Known Command Members**__\n` +
+            (
+                people.length
+                    ? people
+                        .map(p =>
+                            `**${p.character}**${p.leader ? " (Leader)" : ""}\n` +
+                            `• Phone: ${p.phone}\n` +
+                            `• Residence: ${p.personalAddress}`
                         )
-                        +
-                        `\ Known Organization Properties\n` +
-                        (
-                            uniqueHQs.length || uniqueAddrs.length
-                                ? [
-                                    ...uniqueHQs.map(a => `🏠 **HQ:** ${a}`),
-                                    ...uniqueAddrs.map(a => `📍 Property: ${a}`)
-                                ].join("\n")
-                                : "_No faction properties listed._"
-                        ) +
-                        `\n━━━━━━━━━━━━━━━━━━━━━━━━━━`
-                });
+                        .join("\n\n") // ← Adds spacing between characters
+                    : "_No command members listed._"
+            )
+            +
+            `\n\n⠀\n` + // ← CLEAN SEPARATION BETWEEN MEMBERS + PROPERTIES
+            `__**Known Organization Properties**__\n` +
+            (
+                uniqueHQs.length || uniqueAddrs.length
+                    ? [
+                        ...uniqueHQs.map(a => `🏠 **HQ:** ${a}`),
+                        ...uniqueAddrs.map(a => `📍 Property: ${a}`)
+                    ].join("\n")
+                    : "_No faction properties listed._"
+            )
+    });
+
 
             return interaction.reply({ embeds: [embed] });
 
@@ -330,4 +333,5 @@ client.on("interactionCreate", async interaction => {
 
 deployCommands();
 client.login(DISCORD_TOKEN);
+
 
