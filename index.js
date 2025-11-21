@@ -1,23 +1,23 @@
-import { 
-    Client, 
-    GatewayIntentBits, 
-    REST, 
-    Routes, 
-    SlashCommandBuilder, 
-    EmbedBuilder 
+import {
+    Client,
+    GatewayIntentBits,
+    REST,
+    Routes,
+    SlashCommandBuilder,
+    EmbedBuilder
 } from "discord.js";
 
 import { google } from "googleapis";
 
-// Environment variables from Railway
+// Environment variables
 const DISCORD_TOKEN = process.env.DISCORD_TOKEN;
 const CLIENT_ID = process.env.DISCORD_CLIENT_ID;
 const GUILD_ID = process.env.DISCORD_GUILD_ID;
-
 const GOOGLE_CLIENT_EMAIL = process.env.GOOGLE_CLIENT_EMAIL;
 const GOOGLE_PRIVATE_KEY = process.env.GOOGLE_PRIVATE_KEY;
+const GOOGLE_SHEET_ID = process.env.GOOGLE_SHEET_ID;
 
-// Google Sheets auth
+// Google Sheets Authentication
 const auth = new google.auth.JWT(
     GOOGLE_CLIENT_EMAIL,
     null,
@@ -27,10 +27,10 @@ const auth = new google.auth.JWT(
 
 const sheets = google.sheets({ version: "v4", auth });
 
-// Slash command
+// Slash command definition
 const factionInfoCmd = new SlashCommandBuilder()
     .setName("factioninfo")
-    .setDescription("Look up faction information from the dossier.")
+    .setDescription("Look up faction information from the Meridian database.")
     .addStringOption(option =>
         option.setName("faction")
             .setDescription("Faction name")
@@ -40,24 +40,25 @@ const factionInfoCmd = new SlashCommandBuilder()
 
 const rest = new REST({ version: "10" }).setToken(DISCORD_TOKEN);
 
+// Deploy commands
 async function deployCommands() {
     try {
         await rest.put(
             Routes.applicationGuildCommands(CLIENT_ID, GUILD_ID),
             { body: [factionInfoCmd.toJSON()] }
         );
-        console.log("Slash commands registered.");
+        console.log("Commands registered.");
     } catch (err) {
-        console.error("Error deploying commands:", err);
+        console.error("DEPLOY ERROR:", err);
     }
 }
 
+// Cache factions
 let cachedFactions = [];
 
-// Load factions from Columns A and G
-async function loadFactions(sheetId) {
+async function loadFactions() {
     const res = await sheets.spreadsheets.values.get({
-        spreadsheetId: sheetId,
+        spreadsheetId: GOOGLE_SHEET_ID,
         range: "Sheet1!A1:I999"
     });
 
@@ -67,13 +68,14 @@ async function loadFactions(sheetId) {
     const set = new Set();
 
     for (const row of data) {
-        if (row[0]) set.add(row[0].trim()); // Person faction
-        if (row[6]) set.add(row[6].trim()); // Location faction
+        if (row[0]) set.add(row[0].trim()); // Person side
+        if (row[6]) set.add(row[6].trim()); // Location side
     }
 
     cachedFactions = [...set];
 }
 
+// Discord client
 const client = new Client({
     intents: [GatewayIntentBits.Guilds]
 });
@@ -82,12 +84,7 @@ client.once("ready", () => {
     console.log(`Logged in as ${client.user.tag}`);
 
     client.user.setPresence({
-        activities: [
-            {
-                name: "Waiting for associate request...",
-                type: 3
-            }
-        ],
+        activities: [{ name: "Waiting for associate request...", type: 3 }],
         status: "online"
     });
 });
@@ -97,13 +94,10 @@ client.on("interactionCreate", async interaction => {
     if (!interaction.isAutocomplete()) return;
     if (interaction.commandName !== "factioninfo") return;
 
+    if (cachedFactions.length === 0)
+        await loadFactions();
+
     const focused = interaction.options.getFocused();
-    const sheetId = process.env.GOOGLE_SHEET_ID;
-
-    if (cachedFactions.length === 0) {
-        await loadFactions(sheetId);
-    }
-
     const filtered = cachedFactions
         .filter(f => f.toLowerCase().includes(focused.toLowerCase()))
         .slice(0, 25)
@@ -118,11 +112,10 @@ client.on("interactionCreate", async interaction => {
     if (interaction.commandName !== "factioninfo") return;
 
     const factionRequested = interaction.options.getString("faction").toLowerCase();
-    const sheetId = process.env.GOOGLE_SHEET_ID;
 
     try {
         const res = await sheets.spreadsheets.values.get({
-            spreadsheetId: sheetId,
+            spreadsheetId: GOOGLE_SHEET_ID,
             range: "Sheet1!A1:I999"
         });
 
@@ -130,19 +123,20 @@ client.on("interactionCreate", async interaction => {
         const data = rows.slice(1);
 
         //
-        // PEOPLE — Columns A–E
+        // PEOPLE SECTION (A–E)
         //
         const people = data
             .filter(r => r[0] && r[0].toLowerCase() === factionRequested)
             .map(r => ({
                 character: r[1] || "N/A",
                 phone: r[2] || "N/A",
-                personAddress: r[3] || "N/A",
-                leader: r[4] === "TRUE"
+                personalAddress: r[3] || "N/A",
+                leader: r[4] && r[4].toUpperCase() === "TRUE"
             }));
 
         //
-        // LOCATIONS — Columns G–I (indexes 6,7,8)
+        // LOCATION SECTION (G–I)
+        // ALWAYS include ALL addresses
         //
         const locationRows = data.filter(r =>
             r[6] && r[6].toLowerCase() === factionRequested
@@ -152,8 +146,8 @@ client.on("interactionCreate", async interaction => {
         const addresses = [];
 
         for (const row of locationRows) {
-            const address = row[7] ? row[7].trim() : null; // Column H
-            const isHQ = row[8] === "TRUE";                // Column I
+            const address = row[7] ? row[7].trim() : null;
+            const isHQ = row[8] && row[8].toUpperCase() === "TRUE";
 
             if (!address) continue;
 
@@ -166,43 +160,41 @@ client.on("interactionCreate", async interaction => {
         //
         const embed = new EmbedBuilder()
             .setTitle(`Faction Info: ${factionRequested}`)
-            .setColor(0x5e81ac);
+            .setColor(0x2b6cb0);
 
         // Members
         if (people.length > 0) {
             embed.addFields({
                 name: "Members",
-                value: people.map(p =>
-                    `**${p.character}**${p.leader ? " (Leader)" : ""}\n` +
-                    `📞 ${p.phone}\n` +
-                    `🏠 ${p.personAddress}\n`
-                ).join("\n")
+                value: people
+                    .map(p =>
+                        `**${p.character}**${p.leader ? " (Leader)" : ""}\n` +
+                        `📞 ${p.phone}\n` +
+                        `🏠 ${p.personalAddress}\n`
+                    )
+                    .join("\n")
             });
         }
 
         // Locations
         let locText = "";
 
-        for (const hq of hqs) {
+        for (const hq of hqs)
             locText += `🏠 **HQ:** ${hq}\n`;
-        }
 
-        for (const addr of addresses) {
+        for (const addr of addresses)
             locText += `📍 ${addr}\n`;
-        }
 
-        if (locText.length > 0) {
-            embed.addFields({
-                name: "Locations",
-                value: locText
-            });
-        }
+        embed.addFields({
+            name: "Locations",
+            value: locText || "No addresses listed."
+        });
 
         await interaction.reply({ embeds: [embed] });
 
     } catch (err) {
-        console.error(err);
-        return interaction.reply("Error reading the Google Sheet.");
+        console.error("COMMAND ERROR:", err);
+        return interaction.reply("There was an error accessing the Google Sheet.");
     }
 });
 
