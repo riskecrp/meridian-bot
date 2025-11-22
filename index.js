@@ -457,8 +457,8 @@ client.on("interactionCreate", async interaction => {
                 .setColor(0x2b6cb0)
                 .setTitle(
                     `━━━━━━━━━━━━━━━━━━━━━━━━━━\n` +
-                    `🗂️  **MERIDIAN DATABASE ENTRY**\n` +
-                    `**Organization: Property Rewards**\n` +
+                    `🗂️  **FACTION MANAGEMENT**\n` +
+                    `**Property Rewards**\n` +
                     `━━━━━━━━━━━━━━━━━━━━━━━━━━`
                 )
                 .addFields({
@@ -479,9 +479,9 @@ client.on("interactionCreate", async interaction => {
     // ────────────────
 
     if (interaction.commandName === "adddossier") {
-        // Role check: must have EITHER "Team Lead" or "Management" roles
+        // Role check: must have EITHER "Team Leader" or "Management" roles
         const memberRoles = interaction.member?.roles?.cache;
-        const hasTeamLead = memberRoles ? memberRoles.some(r => r.name === "Team Lead") : false;
+        const hasTeamLead = memberRoles ? memberRoles.some(r => r.name === "Team Leader") : false;
         const hasManagement = memberRoles ? memberRoles.some(r => r.name === "Management") : false;
 
         if (!(hasTeamLead || hasManagement)) {
@@ -544,3 +544,4 @@ client.on("interactionCreate", async interaction => {
 
 deployCommands();
 client.login(DISCORD_TOKEN);
+
