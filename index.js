@@ -553,8 +553,8 @@ client.on("interactionCreate", async interaction => {
                     .setColor(0x2b6cb0)
                     .setTitle(
                         `━━━━━━━━━━━━━━━━━━━━━━━━━━\n` +
-                        `🗂️  **MERIDIAN DATABASE ENTRY**\n` +
-                        `**Organization: Property Rewards**\n` +
+                        `🗂️  **FACTION MANAGEMENT**\n` +
+                        `**Property List**\n` +
                         `━━━━━━━━━━━━━━━━━━━━━━━━━━`
                     )
                     .addFields(fields);
@@ -569,8 +569,8 @@ client.on("interactionCreate", async interaction => {
                     .setColor(0x2b6cb0)
                     .setTitle(
                         `━━━━━━━━━━━━━━━━━━━━━━━━━━\n` +
-                        `🗂️  **MERIDIAN DATABASE ENTRY**\n` +
-                        `**Organization: Property Rewards**\n` +
+                        `🗂️  **FACTION MANAGEMENT**\n` +
+                        `**Property List**\n` +
                         `━━━━━━━━━━━━━━━━━━━━━━━━━━`
                     )
                     .addFields(slice);
@@ -590,8 +590,8 @@ client.on("interactionCreate", async interaction => {
                 .setColor(0x2b6cb0)
                 .setTitle(
                     `━━━━━━━━━━━━━━━━━━━━━━━━━━\n` +
-                    `🗂️  **MERIDIAN DATABASE ENTRY**\n` +
-                    `**Organization: Property Rewards**\n` +
+                    `🗂️  **FACTION MANAGEMENT**\n` +
+                    `**Property List**\n` +
                     `━━━━━━━━━━━━━━━━━━━━━━━━━━`
                 )
                 .setDescription("Property list is too long for embeds; attached as properties.txt");
@@ -778,4 +778,5 @@ client.on("interactionCreate", async interaction => {
 
 deployCommands();
 client.login(DISCORD_TOKEN);
+
 
