@@ -5,7 +5,8 @@ import {
     Routes,
     SlashCommandBuilder,
     EmbedBuilder,
-    PermissionFlagsBits
+    PermissionFlagsBits,
+    AttachmentBuilder
 } from "discord.js";
 
 import { google } from "googleapis";
@@ -276,6 +277,48 @@ async function findNextRowTable1() {
     return (res.data.values || []).length + 1;
 }
 
+// Helper to chunk lines into <=1024-char field values
+function chunkLinesToFieldValues(lines, maxLen = 1024) {
+    const chunks = [];
+    let current = "";
+
+    for (const line of lines) {
+        const next = current ? `${current}\n${line}` : line;
+        if (next.length > maxLen) {
+            if (current) {
+                chunks.push(current);
+                current = line;
+                // If single line longer than maxLen, force-split the line
+                if (current.length > maxLen) {
+                    // split the line into pieces
+                    let start = 0;
+                    while (start < current.length) {
+                        const piece = current.slice(start, start + maxLen);
+                        chunks.push(piece);
+                        start += maxLen;
+                    }
+                    current = "";
+                }
+            } else {
+                // current empty but line itself > maxLen
+                let start = 0;
+                while (start < line.length) {
+                    const piece = line.slice(start, start + maxLen);
+                    chunks.push(piece);
+                    start += maxLen;
+                }
+                current = "";
+            }
+        } else {
+            current = next;
+        }
+    }
+
+    if (current) chunks.push(current);
+
+    return chunks;
+}
+
 // ───────────────────────────────────────────────
 // COMMAND HANDLER
 // ───────────────────────────────────────────────
@@ -334,40 +377,40 @@ client.on("interactionCreate", async interaction => {
             // ────────────────
 
             const embed = new EmbedBuilder()
-    .setColor(0x2b6cb0)
-    .setTitle(
-        `━━━━━━━━━━━━━━━━━━━━━━━━━━\n` +
-        `🗂️  **MERIDIAN DATABASE ENTRY**\n` +
-        `**Organization: ${interaction.options.getString("faction")}**\n` +
-        `━━━━━━━━━━━━━━━━━━━━━━━━━━`
-    )
-    .addFields({
-        name: "⠀",
-        value:
-            `__**Known Command Members**__\n` +
-            (
-                people.length
-                    ? people
-                        .map(p =>
-                            `**${p.character}**${p.leader ? " (Leader)" : ""}\n` +
-                            `• Phone: ${p.phone}\n` +
-                            `• Residence: ${p.personalAddress}`
+                .setColor(0x2b6cb0)
+                .setTitle(
+                    `━━━━━━━━━━━━━━━━━━━━━━━━━━\n` +
+                    `🗂️  **MERIDIAN DATABASE ENTRY**\n` +
+                    `**Organization: ${interaction.options.getString("faction")}**\n` +
+                    `━━━━━━━━━━━━━━━━━━━━━━━━━━`
+                )
+                .addFields({
+                    name: "⠀",
+                    value:
+                        `__**Known Command Members**__\n` +
+                        (
+                            people.length
+                                ? people
+                                    .map(p =>
+                                        `**${p.character}**${p.leader ? " (Leader)" : ""}\n` +
+                                        `• Phone: ${p.phone}\n` +
+                                        `• Residence: ${p.personalAddress}`
+                                    )
+                                    .join("\n\n") // ← Adds spacing between characters
+                                : "_No command members listed._"
                         )
-                        .join("\n\n") // ← Adds spacing between characters
-                    : "_No command members listed._"
-            )
-            +
-            `\n\n⠀\n` + // ← CLEAN SEPARATION BETWEEN MEMBERS + PROPERTIES
-            `__**Known Organization Properties**__\n` +
-            (
-                uniqueHQs.length || uniqueAddrs.length
-                    ? [
-                        ...uniqueHQs.map(a => `🏠 **HQ:** ${a}`),
-                        ...uniqueAddrs.map(a => `📍 Property: ${a}`)
-                    ].join("\n")
-                    : "_No faction properties listed._"
-            )
-    });
+                        +
+                        `\n\n⠀\n` + // ← CLEAN SEPARATION BETWEEN MEMBERS + PROPERTIES
+                        `__**Known Organization Properties**__\n` +
+                        (
+                            uniqueHQs.length || uniqueAddrs.length
+                                ? [
+                                    ...uniqueHQs.map(a => `🏠 **HQ:** ${a}`),
+                                    ...uniqueAddrs.map(a => `📍 Property: ${a}`)
+                                ].join("\n")
+                                : "_No faction properties listed._"
+                        )
+                });
 
 
             return interaction.reply({ embeds: [embed] });
@@ -472,22 +515,78 @@ client.on("interactionCreate", async interaction => {
             const rows = res.data.values || [];
             const data = rows.slice(1);
 
-            let bodyValue;
-
             if (data.length === 0) {
-                bodyValue = "_No properties listed._";
-            } else {
-                const lines = data.map(r => {
-                    const faction = r[1] || "Unknown Faction";
-                    const address = r[2] || "N/A";
-                    const type = r[3] || "Property";
-                    const icon = type === "HQ" ? "🏠" : type === "Warehouse" ? "📦" : "📍";
-                    return `**${faction}** - ${icon} ${type}: ${address}`;
-                });
-                bodyValue = lines.join("\n");
+                const embedEmpty = new EmbedBuilder()
+                    .setColor(0x2b6cb0)
+                    .setTitle(
+                        `━━━━━━━━━━━━━━━━━━━━━━━━━━\n` +
+                        `🗂️  **MERIDIAN DATABASE ENTRY**\n` +
+                        `**Organization: Property Rewards**\n` +
+                        `━━━━━━━━━━━━━━━━━━━━━━━━━━`
+                    )
+                    .addFields({ name: "⠀", value: "_No properties listed._" });
+
+                return interaction.reply({ embeds: [embedEmpty] });
             }
 
-            const embed = new EmbedBuilder()
+            // Build lines array
+            const lines = data.map(r => {
+                const faction = r[1] || "Unknown Faction";
+                const address = r[2] || "N/A";
+                const type = r[3] || "Property";
+                const icon = type === "HQ" ? "🏠" : type === "Warehouse" ? "📦" : "📍";
+                return `**${faction}** - ${icon} ${type}: ${address}`;
+            });
+
+            // Chunk lines into field-sized chunks
+            const fieldValues = chunkLinesToFieldValues(lines, 1024);
+
+            // Create fields objects (use zero-width name so they appear as body)
+            const fields = fieldValues.map((v) => ({ name: "⠀", value: v }));
+
+            // Discord limits: max 25 fields per embed, max 10 embeds per message (practical total 250 fields)
+            const MAX_FIELDS_PER_EMBED = 25;
+            const MAX_EMBEDS = 10;
+
+            if (fields.length <= MAX_FIELDS_PER_EMBED) {
+                const embed = new EmbedBuilder()
+                    .setColor(0x2b6cb0)
+                    .setTitle(
+                        `━━━━━━━━━━━━━━━━━━━━━━━━━━\n` +
+                        `🗂️  **MERIDIAN DATABASE ENTRY**\n` +
+                        `**Organization: Property Rewards**\n` +
+                        `━━━━━━━━━━━━━━━━━━━━━━━━━━`
+                    )
+                    .addFields(fields);
+                return interaction.reply({ embeds: [embed] });
+            }
+
+            // If multiple embeds needed
+            const embeds = [];
+            for (let i = 0; i < fields.length && embeds.length < MAX_EMBEDS; i += MAX_FIELDS_PER_EMBED) {
+                const slice = fields.slice(i, i + MAX_FIELDS_PER_EMBED);
+                const embed = new EmbedBuilder()
+                    .setColor(0x2b6cb0)
+                    .setTitle(
+                        `━━━━━━━━━━━━━━━━━━━━━━━━━━\n` +
+                        `🗂️  **MERIDIAN DATABASE ENTRY**\n` +
+                        `**Organization: Property Rewards**\n` +
+                        `━━━━━━━━━━━━━━━━━━━━━━━━━━`
+                    )
+                    .addFields(slice);
+                embeds.push(embed);
+            }
+
+            if (fields.length <= MAX_FIELDS_PER_EMBED * MAX_EMBEDS) {
+                return interaction.reply({ embeds });
+            }
+
+            // Fallback: if we have more than embeds can hold, send as a text attachment instead
+            const fullText = lines.join("\n");
+            const buffer = Buffer.from(fullText, "utf8");
+            const attachment = new AttachmentBuilder(buffer, { name: "properties.txt" });
+
+            const fallbackEmbed = new EmbedBuilder()
                 .setColor(0x2b6cb0)
                 .setTitle(
                     `━━━━━━━━━━━━━━━━━━━━━━━━━━\n` +
@@ -495,12 +594,9 @@ client.on("interactionCreate", async interaction => {
                     `**Organization: Property Rewards**\n` +
                     `━━━━━━━━━━━━━━━━━━━━━━━━━━`
                 )
-                .addFields({
-                    name: "⠀",
-                    value: bodyValue
-                });
+                .setDescription("Property list is too long for embeds; attached as properties.txt");
 
-            return interaction.reply({ embeds: [embed] });
+            return interaction.reply({ embeds: [fallbackEmbed], files: [attachment] });
 
         } catch (err) {
             console.error("LISTPROPERTIES ERROR:", err);
