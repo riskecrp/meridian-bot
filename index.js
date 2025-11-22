@@ -45,7 +45,6 @@ const factionInfoCmd = new SlashCommandBuilder()
 const addPropertyCmd = new SlashCommandBuilder()
     .setName("addproperty")
     .setDescription("Add a property reward and update the faction database.")
-    // Removed default ManageGuild permission to enforce the Management role at runtime.
     .addStringOption(o =>
         o.setName("date")
             .setDescription("Date Given (YYYY-MM-DD)")
@@ -73,8 +72,8 @@ const addPropertyCmd = new SlashCommandBuilder()
             )
     )
     .addBooleanOption(o =>
-        o.setName("fm_provided")
-            .setDescription("Was this provided by FM?")
+        o.setName("confiscated")
+            .setDescription("Confiscated or not?")
             .setRequired(true)
     );
 
@@ -138,6 +137,41 @@ const addDossierCmd = new SlashCommandBuilder()
             )
     );
 
+const confiscatePropertyCmd = new SlashCommandBuilder()
+    .setName("confiscateproperty")
+    .setDescription("Mark a previously-recorded property as confiscated and set the Date Confiscated.")
+    .addStringOption(o =>
+        o.setName("date")
+            .setDescription("Date Given (YYYY-MM-DD) — kept for context but NOT required to match")
+            .setRequired(true)
+    )
+    .addStringOption(o =>
+        o.setName("faction")
+            .setDescription("Faction Name")
+            .setRequired(true)
+            .setAutocomplete(true)
+    )
+    .addStringOption(o =>
+        o.setName("address")
+            .setDescription("Property Address")
+            .setRequired(true)
+    )
+    .addStringOption(o =>
+        o.setName("type")
+            .setDescription("Property Type (kept for context but NOT required to match)")
+            .setRequired(true)
+            .addChoices(
+                { name: "Property", value: "Property" },
+                { name: "Warehouse", value: "Warehouse" },
+                { name: "HQ", value: "HQ" }
+            )
+    )
+    .addBooleanOption(o =>
+        o.setName("confiscated")
+            .setDescription("Set to true to mark confiscated")
+            .setRequired(true)
+    );
+
 const rest = new REST({ version: "10" }).setToken(DISCORD_TOKEN);
 
 // ───────────────────────────────────────────────
@@ -148,7 +182,7 @@ async function deployCommands() {
     try {
         await rest.put(
             Routes.applicationGuildCommands(CLIENT_ID, GUILD_ID),
-            { body: [factionInfoCmd.toJSON(), addPropertyCmd.toJSON(), listPropertiesCmd.toJSON(), addDossierCmd.toJSON()] }
+            { body: [factionInfoCmd.toJSON(), addPropertyCmd.toJSON(), listPropertiesCmd.toJSON(), addDossierCmd.toJSON(), confiscatePropertyCmd.toJSON()] }
         );
         console.log("Commands registered.");
     } catch (err) {
@@ -369,7 +403,7 @@ client.on("interactionCreate", async interaction => {
         const faction = interaction.options.getString("faction");
         const address = interaction.options.getString("address");
         const type = interaction.options.getString("type");
-        const fmProvided = interaction.options.getBoolean("fm_provided");
+        const confiscated = interaction.options.getBoolean("confiscated");
 
         try {
             // PropertyRewards
@@ -379,7 +413,7 @@ client.on("interactionCreate", async interaction => {
                 range: `PropertyRewards!A${rewardsRow}:E${rewardsRow}`,
                 valueInputOption: "USER_ENTERED",
                 requestBody: {
-                    values: [[date, faction, address, type, fmProvided]]
+                    values: [[date, faction, address, type, confiscated]]
                 }
             });
 
@@ -457,8 +491,8 @@ client.on("interactionCreate", async interaction => {
                 .setColor(0x2b6cb0)
                 .setTitle(
                     `━━━━━━━━━━━━━━━━━━━━━━━━━━\n` +
-                    `🗂️  **FACTION MANAGEMENT**\n` +
-                    `**Property Rewards**\n` +
+                    `🗂️  **MERIDIAN DATABASE ENTRY**\n` +
+                    `**Organization: Property Rewards**\n` +
                     `━━━━━━━━━━━━━━━━━━━━━━━━━━`
                 )
                 .addFields({
@@ -475,13 +509,117 @@ client.on("interactionCreate", async interaction => {
     }
 
     // ────────────────
+    // /confiscateproperty (Management-only)
+    // ────────────────
+
+    if (interaction.commandName === "confiscateproperty") {
+        // Role check: only those with role named "Management"
+        const memberRoles = interaction.member?.roles?.cache;
+        const hasManagement = memberRoles ? memberRoles.some(r => r.name === "Management") : false;
+
+        if (!hasManagement) {
+            return interaction.reply({ content: "You do not have permission to run this command. (Requires Management role)", ephemeral: true });
+        }
+
+        // Defer reply to avoid timeouts
+        try {
+            await interaction.deferReply({ ephemeral: true });
+        } catch (err) {
+            console.warn("Failed to defer reply:", err);
+        }
+
+        const dateGivenInput = interaction.options.getString("date"); // kept for context but not used for matching
+        const factionInput = interaction.options.getString("faction");
+        const addressInput = interaction.options.getString("address");
+        const typeInput = interaction.options.getString("type"); // kept for context but not used for matching
+        const confiscatedFlag = interaction.options.getBoolean("confiscated");
+
+        // Only proceed if they expressly set confiscated to true
+        if (!confiscatedFlag) {
+            return interaction.editReply({ content: "No action taken — 'confiscated' was not set to true.", ephemeral: true });
+        }
+
+        try {
+            // Read PropertyRewards including Date Confiscated (assumed to be column F)
+            const res = await sheets.spreadsheets.values.get({
+                spreadsheetId: GOOGLE_SHEET_ID,
+                range: "PropertyRewards!A1:F999"
+            });
+
+            const rows = res.data.values || [];
+
+            // Find matching rows by Faction (col B) and Address (col C), case-insensitive
+            const factionNorm = (factionInput || "").trim().toLowerCase();
+            const addressNorm = (addressInput || "").trim().toLowerCase();
+
+            const candidates = []; // { index, dateTimestamp, row }
+            for (let i = 1; i < rows.length; i++) {
+                const r = rows[i];
+                const rFaction = (r[1] || "").toString().trim().toLowerCase();
+                const rAddress = (r[2] || "").toString().trim().toLowerCase();
+                if (rFaction === factionNorm && rAddress === addressNorm) {
+                    // try to parse date from column A
+                    let ts = 0;
+                    if (r[0]) {
+                        const parsed = Date.parse(r[0].toString().trim());
+                        if (!isNaN(parsed)) ts = parsed;
+                    }
+                    candidates.push({ index: i, dateTimestamp: ts, row: r });
+                }
+            }
+
+            if (candidates.length === 0) {
+                return interaction.editReply({ content: "No matching PropertyRewards row found for that Faction and Address." });
+            }
+
+            // Choose candidate with the most recent dateTimestamp; if all zero, choose the last matching row
+            candidates.sort((a, b) => {
+                if (a.dateTimestamp === b.dateTimestamp) return a.index - b.index;
+                return b.dateTimestamp - a.dateTimestamp; // descending
+            });
+
+            const chosen = candidates[0];
+            const sheetRow = chosen.index + 1; // because rows array is 0-based and header is at index 0
+
+            // Prepare updated row values: A-F (Date Given, Faction, Address, Type, Confiscated, Date Confiscated)
+            const existingRow = chosen.row;
+            const updatedA = existingRow[0] || dateGivenInput;
+            const updatedB = existingRow[1] || factionInput;
+            const updatedC = existingRow[2] || addressInput;
+            const updatedD = existingRow[3] || typeInput;
+            const updatedE = true; // Confiscated = TRUE
+            const dateConfiscated = new Date().toISOString().slice(0, 10); // YYYY-MM-DD (UTC)
+            const updatedF = dateConfiscated; // Date Confiscated
+
+            await sheets.spreadsheets.values.update({
+                spreadsheetId: GOOGLE_SHEET_ID,
+                range: `PropertyRewards!A${sheetRow}:F${sheetRow}`,
+                valueInputOption: "USER_ENTERED",
+                requestBody: {
+                    values: [[updatedA, updatedB, updatedC, updatedD, updatedE, updatedF]]
+                }
+            });
+
+            return interaction.editReply({ content: `✅ Property row updated for Faction="${updatedB}", Address="${updatedC}": Confiscated=TRUE, Date Confiscated=${dateConfiscated}` });
+
+        } catch (err) {
+            console.error("CONFISCATEPROPERTY ERROR:", err);
+            try {
+                return interaction.editReply("There was an error updating the Google Sheet.");
+            } catch (e) {
+                return interaction.followUp({ content: "There was an error updating the Google Sheet.", ephemeral: true });
+            }
+        }
+    }
+
+    // ────────────────
     // /adddossier (Team Lead OR Management roles required)
     // ────────────────
 
     if (interaction.commandName === "adddossier") {
-        // Role check: must have EITHER "Team Leader" or "Management" roles
+        // Role check: must have EITHER "Team Lead" or "Management" roles
         const memberRoles = interaction.member?.roles?.cache;
-        const hasTeamLead = memberRoles ? memberRoles.some(r => r.name === "Team Leader") : false;
+        const hasTeamLead = memberRoles ? memberRoles.some(r => r.name === "Team Lead") : false;
         const hasManagement = memberRoles ? memberRoles.some(r => r.name === "Management") : false;
 
         if (!(hasTeamLead || hasManagement)) {
@@ -544,4 +682,3 @@ client.on("interactionCreate", async interaction => {
 
 deployCommands();
 client.login(DISCORD_TOKEN);
-
