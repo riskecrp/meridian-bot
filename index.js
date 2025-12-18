@@ -1445,7 +1445,8 @@ client.on("interactionCreate", async interaction => {
             let notes = [];
             for (let i = 1; i < rows.length; i++) {
                 const row = rows[i];
-                if (row[0]?.toLowerCase().trim() === factionLower) {
+                // Check if row has data and faction matches
+                if (row && row.length > 0 && row[0]?.toLowerCase().trim() === factionLower) {
                     notes.push({
                         note: row[1] || "N/A",
                         createdBy: row[2] || "Unknown",
@@ -1460,7 +1461,11 @@ client.on("interactionCreate", async interaction => {
                 thirtyDaysAgo.setDate(thirtyDaysAgo.getDate() - 30);
                 
                 notes = notes.filter(n => {
-                    const noteDate = new Date(n.createdOn);
+                    // Skip notes with no valid date
+                    if (!n.createdOn || n.createdOn === "Unknown") {
+                        return false;
+                    }
+                    const noteDate = new Date(n.createdOn + 'T00:00:00'); // Add time to ensure proper parsing
                     return !isNaN(noteDate.getTime()) && noteDate >= thirtyDaysAgo;
                 });
             }
