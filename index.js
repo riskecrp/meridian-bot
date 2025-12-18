@@ -1479,10 +1479,12 @@ client.on("interactionCreate", async interaction => {
                 return interaction.reply({ embeds: [embedEmpty] });
             }
 
-            // Build note lines
-            const lines = notes.map(n => 
-                `**${n.createdOn}** by ${n.createdBy}\n${n.note}`
-            );
+            // Build note lines with clear separation
+            const lines = [];
+            for (let i = 0; i < notes.length; i++) {
+                const n = notes[i];
+                lines.push(`**${n.createdOn}** by ${n.createdBy}\n${n.note}\n⠀`);
+            }
 
             // Chunk into fields
             const fieldValues = chunkLinesToFieldValues(lines, 1024);
