@@ -1457,7 +1457,9 @@ client.on("interactionCreate", async interaction => {
 
             // Filter by date if not showing all
             if (!showAll) {
-                const thirtyDaysAgo = new Date();
+                const today = new Date();
+                today.setHours(0, 0, 0, 0); // Start of today
+                const thirtyDaysAgo = new Date(today);
                 thirtyDaysAgo.setDate(thirtyDaysAgo.getDate() - 30);
                 
                 notes = notes.filter(n => {
@@ -1465,8 +1467,13 @@ client.on("interactionCreate", async interaction => {
                     if (!n.createdOn || n.createdOn === "Unknown") {
                         return false;
                     }
-                    const noteDate = new Date(n.createdOn + 'T00:00:00'); // Add time to ensure proper parsing
-                    return !isNaN(noteDate.getTime()) && noteDate >= thirtyDaysAgo;
+                    // Parse the date (YYYY-MM-DD format)
+                    const noteDate = new Date(n.createdOn + 'T00:00:00');
+                    if (isNaN(noteDate.getTime())) {
+                        return false;
+                    }
+                    // Compare dates (both are now at midnight)
+                    return noteDate >= thirtyDaysAgo;
                 });
             }
 
