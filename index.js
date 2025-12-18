@@ -1467,11 +1467,12 @@ client.on("interactionCreate", async interaction => {
                     if (!n.createdOn || n.createdOn === "Unknown") {
                         return false;
                     }
-                    // Parse the date (YYYY-MM-DD format)
-                    const noteDate = new Date(n.createdOn + 'T00:00:00');
+                    // Parse the date and normalize to midnight
+                    const noteDate = new Date(n.createdOn);
                     if (isNaN(noteDate.getTime())) {
                         return false;
                     }
+                    noteDate.setHours(0, 0, 0, 0);
                     // Compare dates (both are now at midnight)
                     return noteDate >= thirtyDaysAgo;
                 });
