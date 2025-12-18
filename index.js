@@ -1273,13 +1273,16 @@ client.on("interactionCreate", async interaction => {
                 const participants = row[5] || ""; // Column F
                 const lastRunDate = row[6] || ""; // Column G
                 
-                // Check if scene was run in last 90 days
+                // Check if scene was run in last 90 days (skip if older than 90 days)
                 if (lastRunDate) {
                     const runDate = new Date(lastRunDate);
                     if (!isNaN(runDate.getTime()) && runDate < ninetyDaysAgo) {
-                        // Skip scenes not run in last 90 days
+                        // Scene was last run more than 90 days ago, skip it
                         continue;
                     }
+                } else {
+                    // No last run date recorded, skip this scene
+                    continue;
                 }
                 
                 // Parse participants and count faction occurrences
@@ -1313,7 +1316,7 @@ client.on("interactionCreate", async interaction => {
             // Build scene list
             const lines = [];
             for (const [sceneName, counts] of sceneCounts.entries()) {
-                lines.push(`**${sceneName}**\n• Total Runs: ${counts.totalRuns}`);
+                lines.push(`**${sceneName}**\n• Faction Runs: ${counts.factionRuns}\n• Total Runs: ${counts.totalRuns}`);
             }
 
             // Chunk into fields
