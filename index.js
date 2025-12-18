@@ -1407,12 +1407,27 @@ client.on("interactionCreate", async interaction => {
 
             // Process all scenes
             const sceneList = [];
+            const MAX_FIELD_LENGTH = 200; // Discord embed field safe length
+            const TRUNCATE_LENGTH = 197; // Leave room for "..."
+            
             for (let i = 1; i < rows.length; i++) {
                 const row = rows[i];
+                if (!row || row.length === 0) continue; // Skip empty rows
+                
                 const sceneName = row[0] || "Unknown Scene";
                 const meridianOrPed = row[1] || "N/A";
-                const sceneInfo = row[2] || "N/A";
-                const rewards = row[3] || "N/A";
+                
+                // Truncate long text fields to prevent Discord embed limits
+                const rawSceneInfo = row[2] || "N/A";
+                const sceneInfo = rawSceneInfo.length > MAX_FIELD_LENGTH 
+                    ? rawSceneInfo.substring(0, TRUNCATE_LENGTH) + "..." 
+                    : rawSceneInfo;
+                
+                const rawRewards = row[3] || "N/A";
+                const rewards = rawRewards.length > MAX_FIELD_LENGTH 
+                    ? rawRewards.substring(0, TRUNCATE_LENGTH) + "..." 
+                    : rawRewards;
+                
                 const timesRun = parseInt(row[4] || "0", 10);
                 const participants = row[5] || "";
                 
