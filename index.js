@@ -1411,7 +1411,7 @@ client.on("interactionCreate", async interaction => {
                 const row = rows[i];
                 const sceneName = row[0] || "Unknown Scene";
                 const meridianOrPed = row[1] || "N/A";
-                const timesRun = parseInt(row[4] || "0");
+                const timesRun = parseInt(row[4] || "0", 10);
                 const participants = row[5] || "";
                 
                 // Get unique factions from participants
