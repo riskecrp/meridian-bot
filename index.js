@@ -22,13 +22,17 @@ const client = new Client({
 // Bot ready event
 client.once('ready', () => {
   console.log(`✅ Bot is ready! Logged in as ${client.user.tag}`);
-  console.log(`📋 Environment variables loaded:`);
-  console.log(`   - CLIENT_ID: ${CLIENT_ID ? '✓' : '✗'}`);
-  console.log(`   - DISCORD_TOKEN: ${DISCORD_TOKEN ? '✓' : '✗'}`);
-  console.log(`   - GOOGLE_CLIENT_EMAIL: ${GOOGLE_CLIENT_EMAIL ? '✓' : '✗'}`);
-  console.log(`   - GOOGLE_PRIVATE_KEY: ${GOOGLE_PRIVATE_KEY ? '✓' : '✗'}`);
-  console.log(`   - GOOGLE_SHEET_ID: ${GOOGLE_SHEET_ID ? '✓' : '✗'}`);
-  console.log(`   - GUILD_ID: ${GUILD_ID ? '✓' : '✗'}`);
+  
+  // Only log environment variable status in development
+  if (process.env.NODE_ENV === 'development') {
+    console.log(`📋 Environment variables loaded:`);
+    console.log(`   - CLIENT_ID: ${CLIENT_ID ? '✓' : '✗'}`);
+    console.log(`   - DISCORD_TOKEN: ${DISCORD_TOKEN ? '✓' : '✗'}`);
+    console.log(`   - GOOGLE_CLIENT_EMAIL: ${GOOGLE_CLIENT_EMAIL ? '✓' : '✗'}`);
+    console.log(`   - GOOGLE_PRIVATE_KEY: ${GOOGLE_PRIVATE_KEY ? '✓' : '✗'}`);
+    console.log(`   - GOOGLE_SHEET_ID: ${GOOGLE_SHEET_ID ? '✓' : '✗'}`);
+    console.log(`   - GUILD_ID: ${GUILD_ID ? '✓' : '✗'}`);
+  }
 });
 
 // Error handling
