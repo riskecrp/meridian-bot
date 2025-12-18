@@ -173,6 +173,135 @@ const confiscatePropertyCmd = new SlashCommandBuilder()
             .setRequired(true)
     );
 
+// ───────────────────────────────────────────────
+// NEW COMMANDS: One-Off Scenes
+// ───────────────────────────────────────────────
+
+const addSceneCmd = new SlashCommandBuilder()
+    .setName("addscene")
+    .setDescription("Add a new one-off scene to the database.")
+    .addStringOption(o =>
+        o.setName("scene_name")
+            .setDescription("Name of the scene")
+            .setRequired(true)
+    );
+
+const logSceneCmd = new SlashCommandBuilder()
+    .setName("logscene")
+    .setDescription("Log execution of a scene with updated metadata.")
+    .addStringOption(o =>
+        o.setName("scene_name")
+            .setDescription("Name of the scene")
+            .setRequired(true)
+    )
+    .addStringOption(o =>
+        o.setName("participants")
+            .setDescription("Participant names (comma-separated)")
+            .setRequired(true)
+    );
+
+const sceneCountCmd = new SlashCommandBuilder()
+    .setName("scenecount")
+    .setDescription("Get total times a scene ran for a specific faction.")
+    .addStringOption(o =>
+        o.setName("scene_name")
+            .setDescription("Name of the scene")
+            .setRequired(true)
+    )
+    .addStringOption(o =>
+        o.setName("faction")
+            .setDescription("Faction name")
+            .setRequired(true)
+            .setAutocomplete(true)
+    );
+
+// ───────────────────────────────────────────────
+// NEW COMMANDS: Notable Interactions
+// ───────────────────────────────────────────────
+
+const addNoteCmd = new SlashCommandBuilder()
+    .setName("addnote")
+    .setDescription("Log a notable interaction for a faction.")
+    .addStringOption(o =>
+        o.setName("faction")
+            .setDescription("Faction name")
+            .setRequired(true)
+            .setAutocomplete(true)
+    )
+    .addStringOption(o =>
+        o.setName("note")
+            .setDescription("The notable interaction to record")
+            .setRequired(true)
+    );
+
+const getNotesCmd = new SlashCommandBuilder()
+    .setName("getnotes")
+    .setDescription("Retrieve notable interactions for a faction.")
+    .addStringOption(o =>
+        o.setName("faction")
+            .setDescription("Faction name")
+            .setRequired(true)
+            .setAutocomplete(true)
+    )
+    .addBooleanOption(o =>
+        o.setName("all")
+            .setDescription("Show all notes (default: last 30 days)")
+            .setRequired(false)
+    );
+
+// ───────────────────────────────────────────────
+// NEW COMMANDS: Reminders
+// ───────────────────────────────────────────────
+
+const setReminderCmd = new SlashCommandBuilder()
+    .setName("setreminder")
+    .setDescription("Create a one-time or recurring reminder.")
+    .addStringOption(o =>
+        o.setName("text")
+            .setDescription("Reminder text")
+            .setRequired(true)
+    )
+    .addStringOption(o =>
+        o.setName("time")
+            .setDescription("Time (HH:MM format, 24-hour)")
+            .setRequired(true)
+    )
+    .addStringOption(o =>
+        o.setName("date")
+            .setDescription("Date (YYYY-MM-DD)")
+            .setRequired(true)
+    )
+    .addStringOption(o =>
+        o.setName("recurrence")
+            .setDescription("Recurrence pattern")
+            .setRequired(false)
+            .addChoices(
+                { name: "None (One-time)", value: "none" },
+                { name: "Daily", value: "daily" },
+                { name: "Weekly", value: "weekly" },
+                { name: "Monthly", value: "monthly" }
+            )
+    )
+    .addStringOption(o =>
+        o.setName("timezone")
+            .setDescription("Timezone (e.g., America/New_York, UTC)")
+            .setRequired(false)
+    )
+    .addStringOption(o =>
+        o.setName("visibility")
+            .setDescription("Who can see this reminder")
+            .setRequired(false)
+            .addChoices(
+                { name: "Private (only you)", value: "private" },
+                { name: "Role (your role)", value: "role" },
+                { name: "Public (everyone)", value: "public" }
+            )
+    );
+
+const listRemindersCmd = new SlashCommandBuilder()
+    .setName("listreminders")
+    .setDescription("Display your reminders and those shared with you.");
+
 const rest = new REST({ version: "10" }).setToken(DISCORD_TOKEN);
 
 // ───────────────────────────────────────────────
@@ -183,7 +312,22 @@ async function deployCommands() {
     try {
         await rest.put(
             Routes.applicationGuildCommands(CLIENT_ID, GUILD_ID),
-            { body: [factionInfoCmd.toJSON(), addPropertyCmd.toJSON(), listPropertiesCmd.toJSON(), addDossierCmd.toJSON(), confiscatePropertyCmd.toJSON()] }
+            { 
+                body: [
+                    factionInfoCmd.toJSON(), 
+                    addPropertyCmd.toJSON(), 
+                    listPropertiesCmd.toJSON(), 
+                    addDossierCmd.toJSON(), 
+                    confiscatePropertyCmd.toJSON(),
+                    addSceneCmd.toJSON(),
+                    logSceneCmd.toJSON(),
+                    sceneCountCmd.toJSON(),
+                    addNoteCmd.toJSON(),
+                    getNotesCmd.toJSON(),
+                    setReminderCmd.toJSON(),
+                    listRemindersCmd.toJSON()
+                ] 
+            }
         );
         console.log("Commands registered.");
     } catch (err) {
@@ -317,6 +461,88 @@ function chunkLinesToFieldValues(lines, maxLen = 1024) {
     if (current) chunks.push(current);
 
     return chunks;
+}
+
+// ───────────────────────────────────────────────
+// NEW HELPERS: Sheet Initialization & Utilities
+// ───────────────────────────────────────────────
+
+// Ensure a sheet tab exists with specified headers
+async function ensureSheetTab(tabName, headers) {
+    try {
+        // Get all sheets
+        const sheetInfo = await sheets.spreadsheets.get({
+            spreadsheetId: GOOGLE_SHEET_ID
+        });
+        
+        const existingSheet = sheetInfo.data.sheets.find(s => s.properties.title === tabName);
+        
+        if (!existingSheet) {
+            // Create the sheet
+            await sheets.spreadsheets.batchUpdate({
+                spreadsheetId: GOOGLE_SHEET_ID,
+                requestBody: {
+                    requests: [{
+                        addSheet: {
+                            properties: { title: tabName }
+                        }
+                    }]
+                }
+            });
+        }
+        
+        // Check if headers exist
+        const headerRes = await sheets.spreadsheets.values.get({
+            spreadsheetId: GOOGLE_SHEET_ID,
+            range: `${tabName}!A1:${String.fromCharCode(64 + headers.length)}1`
+        });
+        
+        const existingHeaders = headerRes.data.values?.[0] || [];
+        
+        // Only write headers if they don't exist or are incomplete
+        if (existingHeaders.length === 0) {
+            await sheets.spreadsheets.values.update({
+                spreadsheetId: GOOGLE_SHEET_ID,
+                range: `${tabName}!A1:${String.fromCharCode(64 + headers.length)}1`,
+                valueInputOption: "USER_ENTERED",
+                requestBody: {
+                    values: [headers]
+                }
+            });
+        }
+    } catch (err) {
+        console.error(`Error ensuring sheet tab ${tabName}:`, err);
+        throw err;
+    }
+}
+
+// Find next available row in a tab
+async function findNextRowInTab(tabName, column = "A") {
+    const res = await sheets.spreadsheets.values.get({
+        spreadsheetId: GOOGLE_SHEET_ID,
+        range: `${tabName}!${column}:${column}`
+    });
+    return (res.data.values || []).length + 1;
+}
+
+// Helper to check if user has required roles
+function hasRequiredRole(interaction, roleNames) {
+    const memberRoles = interaction.member?.roles?.cache;
+    if (!memberRoles) return false;
+    return roleNames.some(roleName => memberRoles.some(r => r.name === roleName));
+}
+
+// Get user's highest role from a list of role names
+function getUserHighestRole(interaction, roleNames) {
+    const memberRoles = interaction.member?.roles?.cache;
+    if (!memberRoles) return null;
+    
+    for (const roleName of roleNames) {
+        if (memberRoles.some(r => r.name === roleName)) {
+            return roleName;
+        }
+    }
+    return null;
 }
 
 // ───────────────────────────────────────────────
@@ -768,6 +994,536 @@ client.on("interactionCreate", async interaction => {
         } catch (err) {
             console.error("ADDDOSSIER ERROR:", err);
             return interaction.reply("There was an error updating the Google Sheet.");
+        }
+    }
+
+    // ────────────────────────────────────────────────────────────
+    // NEW COMMAND HANDLERS: One-Off Scenes
+    // ────────────────────────────────────────────────────────────
+
+    // ────────────────
+    // /addscene (Team Leader OR Management)
+    // ────────────────
+    if (interaction.commandName === "addscene") {
+        if (!hasRequiredRole(interaction, ["Team Leader", "Management"])) {
+            return interaction.reply({ 
+                content: "You do not have permission to run this command. (Requires Team Leader or Management role)", 
+                ephemeral: true 
+            });
+        }
+
+        const sceneName = interaction.options.getString("scene_name");
+
+        try {
+            await interaction.deferReply({ ephemeral: true });
+
+            // Ensure the tab exists
+            await ensureSheetTab("One Off Scenes", ["Scene Name", "Times Run", "Participants", "Last Run Date"]);
+
+            // Check for duplicates
+            const res = await sheets.spreadsheets.values.get({
+                spreadsheetId: GOOGLE_SHEET_ID,
+                range: "One Off Scenes!A:A"
+            });
+
+            const existingScenes = (res.data.values || []).slice(1).map(row => row[0]?.toLowerCase().trim());
+            
+            if (existingScenes.includes(sceneName.toLowerCase().trim())) {
+                return interaction.editReply({ content: `❌ Scene "${sceneName}" already exists.` });
+            }
+
+            // Add the scene
+            const nextRow = await findNextRowInTab("One Off Scenes", "A");
+            await sheets.spreadsheets.values.update({
+                spreadsheetId: GOOGLE_SHEET_ID,
+                range: `One Off Scenes!A${nextRow}:D${nextRow}`,
+                valueInputOption: "USER_ENTERED",
+                requestBody: {
+                    values: [[sceneName, 0, "", ""]]
+                }
+            });
+
+            return interaction.editReply({ content: `✅ Scene "${sceneName}" added successfully.` });
+
+        } catch (err) {
+            console.error("ADDSCENE ERROR:", err);
+            try {
+                return interaction.editReply({ content: "There was an error updating the Google Sheet." });
+            } catch (e) {
+                return interaction.followUp({ content: "There was an error updating the Google Sheet.", ephemeral: true });
+            }
+        }
+    }
+
+    // ────────────────
+    // /logscene (Team Leader, Management, OR Team Guide)
+    // ────────────────
+    if (interaction.commandName === "logscene") {
+        if (!hasRequiredRole(interaction, ["Team Leader", "Management", "Team Guide"])) {
+            return interaction.reply({ 
+                content: "You do not have permission to run this command. (Requires Team Leader, Management, or Team Guide role)", 
+                ephemeral: true 
+            });
+        }
+
+        const sceneName = interaction.options.getString("scene_name");
+        const participants = interaction.options.getString("participants");
+
+        try {
+            await interaction.deferReply({ ephemeral: true });
+
+            // Ensure the tab exists
+            await ensureSheetTab("One Off Scenes", ["Scene Name", "Times Run", "Participants", "Last Run Date"]);
+
+            // Find the scene
+            const res = await sheets.spreadsheets.values.get({
+                spreadsheetId: GOOGLE_SHEET_ID,
+                range: "One Off Scenes!A:D"
+            });
+
+            const rows = res.data.values || [];
+            let sceneRow = -1;
+
+            for (let i = 1; i < rows.length; i++) {
+                if (rows[i][0]?.toLowerCase().trim() === sceneName.toLowerCase().trim()) {
+                    sceneRow = i + 1; // Sheet rows are 1-indexed
+                    break;
+                }
+            }
+
+            if (sceneRow === -1) {
+                return interaction.editReply({ content: `❌ Scene "${sceneName}" not found. Use /addscene to create it first.` });
+            }
+
+            const currentData = rows[sceneRow - 1];
+            const timesRun = parseInt(currentData[1] || "0") + 1;
+            const existingParticipants = currentData[2] || "";
+            const newParticipants = existingParticipants 
+                ? `${existingParticipants}, ${participants}` 
+                : participants;
+            const lastRunDate = new Date().toISOString().slice(0, 10); // YYYY-MM-DD
+
+            // Update the row
+            await sheets.spreadsheets.values.update({
+                spreadsheetId: GOOGLE_SHEET_ID,
+                range: `One Off Scenes!A${sceneRow}:D${sceneRow}`,
+                valueInputOption: "USER_ENTERED",
+                requestBody: {
+                    values: [[sceneName, timesRun, newParticipants, lastRunDate]]
+                }
+            });
+
+            return interaction.editReply({ 
+                content: `✅ Scene "${sceneName}" logged successfully.\n• Times Run: ${timesRun}\n• Last Run: ${lastRunDate}` 
+            });
+
+        } catch (err) {
+            console.error("LOGSCENE ERROR:", err);
+            try {
+                return interaction.editReply({ content: "There was an error updating the Google Sheet." });
+            } catch (e) {
+                return interaction.followUp({ content: "There was an error updating the Google Sheet.", ephemeral: true });
+            }
+        }
+    }
+
+    // ────────────────
+    // /scenecount (Public access)
+    // ────────────────
+    if (interaction.commandName === "scenecount") {
+        const sceneName = interaction.options.getString("scene_name");
+        const faction = interaction.options.getString("faction");
+
+        try {
+            // Check if tab exists
+            const sheetInfo = await sheets.spreadsheets.get({
+                spreadsheetId: GOOGLE_SHEET_ID
+            });
+            
+            const tabExists = sheetInfo.data.sheets.some(s => s.properties.title === "One Off Scenes");
+            
+            if (!tabExists) {
+                return interaction.reply({ 
+                    content: `Scene "${sceneName}" has not been run for faction "${faction}".`, 
+                    ephemeral: true 
+                });
+            }
+
+            // Get scene data
+            const res = await sheets.spreadsheets.values.get({
+                spreadsheetId: GOOGLE_SHEET_ID,
+                range: "One Off Scenes!A:D"
+            });
+
+            const rows = res.data.values || [];
+            let sceneData = null;
+
+            for (let i = 1; i < rows.length; i++) {
+                if (rows[i][0]?.toLowerCase().trim() === sceneName.toLowerCase().trim()) {
+                    sceneData = rows[i];
+                    break;
+                }
+            }
+
+            if (!sceneData) {
+                return interaction.reply({ 
+                    content: `Scene "${sceneName}" has not been run for faction "${faction}".`, 
+                    ephemeral: true 
+                });
+            }
+
+            // Parse participants and count faction occurrences
+            const participants = sceneData[2] || "";
+            const participantList = participants.split(',').map(p => p.trim().toLowerCase());
+            const factionLower = faction.toLowerCase();
+            
+            // Count how many times the faction appears in participants
+            const count = participantList.filter(p => p.includes(factionLower)).length;
+
+            return interaction.reply({ 
+                content: `📊 Scene "${sceneName}" has been run **${count}** time(s) for faction "${faction}".`, 
+                ephemeral: true 
+            });
+
+        } catch (err) {
+            console.error("SCENECOUNT ERROR:", err);
+            return interaction.reply({ 
+                content: "There was an error accessing the Google Sheet.", 
+                ephemeral: true 
+            });
+        }
+    }
+
+    // ────────────────────────────────────────────────────────────
+    // NEW COMMAND HANDLERS: Notable Interactions
+    // ────────────────────────────────────────────────────────────
+
+    // ────────────────
+    // /addnote (Team Leader, Management, OR Team Guide)
+    // ────────────────
+    if (interaction.commandName === "addnote") {
+        if (!hasRequiredRole(interaction, ["Team Leader", "Management", "Team Guide"])) {
+            return interaction.reply({ 
+                content: "You do not have permission to run this command. (Requires Team Leader, Management, or Team Guide role)", 
+                ephemeral: true 
+            });
+        }
+
+        const faction = interaction.options.getString("faction");
+        const note = interaction.options.getString("note");
+        const createdBy = interaction.user.username;
+        const createdOn = new Date().toISOString().slice(0, 10); // YYYY-MM-DD
+
+        try {
+            await interaction.deferReply({ ephemeral: true });
+
+            // Ensure the tab exists
+            await ensureSheetTab("Notable Interactions", ["Faction", "Note", "Created By", "Created On"]);
+
+            // Add the note
+            const nextRow = await findNextRowInTab("Notable Interactions", "A");
+            await sheets.spreadsheets.values.update({
+                spreadsheetId: GOOGLE_SHEET_ID,
+                range: `Notable Interactions!A${nextRow}:D${nextRow}`,
+                valueInputOption: "USER_ENTERED",
+                requestBody: {
+                    values: [[faction, note, createdBy, createdOn]]
+                }
+            });
+
+            return interaction.editReply({ content: `✅ Note added for faction "${faction}".` });
+
+        } catch (err) {
+            console.error("ADDNOTE ERROR:", err);
+            try {
+                return interaction.editReply({ content: "There was an error updating the Google Sheet." });
+            } catch (e) {
+                return interaction.followUp({ content: "There was an error updating the Google Sheet.", ephemeral: true });
+            }
+        }
+    }
+
+    // ────────────────
+    // /getnotes (Public access)
+    // ────────────────
+    if (interaction.commandName === "getnotes") {
+        const faction = interaction.options.getString("faction");
+        const showAll = interaction.options.getBoolean("all") || false;
+
+        try {
+            // Check if tab exists
+            const sheetInfo = await sheets.spreadsheets.get({
+                spreadsheetId: GOOGLE_SHEET_ID
+            });
+            
+            const tabExists = sheetInfo.data.sheets.some(s => s.properties.title === "Notable Interactions");
+            
+            if (!tabExists) {
+                const embedEmpty = new EmbedBuilder()
+                    .setColor(0x2b6cb0)
+                    .setTitle(
+                        `━━━━━━━━━━━━━━━━━━━━━━━━━━\n` +
+                        `📝  **NOTABLE INTERACTIONS**\n` +
+                        `**Faction: ${faction}**\n` +
+                        `━━━━━━━━━━━━━━━━━━━━━━━━━━`
+                    )
+                    .addFields({ name: "⠀", value: "_No notes found._" });
+
+                return interaction.reply({ embeds: [embedEmpty] });
+            }
+
+            // Get notes
+            const res = await sheets.spreadsheets.values.get({
+                spreadsheetId: GOOGLE_SHEET_ID,
+                range: "Notable Interactions!A:D"
+            });
+
+            const rows = res.data.values || [];
+            const factionLower = faction.toLowerCase().trim();
+            
+            // Filter notes for the faction
+            let notes = [];
+            for (let i = 1; i < rows.length; i++) {
+                const row = rows[i];
+                if (row[0]?.toLowerCase().trim() === factionLower) {
+                    notes.push({
+                        note: row[1] || "N/A",
+                        createdBy: row[2] || "Unknown",
+                        createdOn: row[3] || "Unknown"
+                    });
+                }
+            }
+
+            // Filter by date if not showing all
+            if (!showAll) {
+                const thirtyDaysAgo = new Date();
+                thirtyDaysAgo.setDate(thirtyDaysAgo.getDate() - 30);
+                
+                notes = notes.filter(n => {
+                    const noteDate = new Date(n.createdOn);
+                    return !isNaN(noteDate.getTime()) && noteDate >= thirtyDaysAgo;
+                });
+            }
+
+            if (notes.length === 0) {
+                const embedEmpty = new EmbedBuilder()
+                    .setColor(0x2b6cb0)
+                    .setTitle(
+                        `━━━━━━━━━━━━━━━━━━━━━━━━━━\n` +
+                        `📝  **NOTABLE INTERACTIONS**\n` +
+                        `**Faction: ${faction}**\n` +
+                        `━━━━━━━━━━━━━━━━━━━━━━━━━━`
+                    )
+                    .addFields({ name: "⠀", value: showAll ? "_No notes found._" : "_No notes found in the last 30 days._" });
+
+                return interaction.reply({ embeds: [embedEmpty] });
+            }
+
+            // Build note lines
+            const lines = notes.map(n => 
+                `**${n.createdOn}** by ${n.createdBy}\n${n.note}`
+            );
+
+            // Chunk into fields
+            const fieldValues = chunkLinesToFieldValues(lines, 1024);
+            const fields = fieldValues.map(v => ({ name: "⠀", value: v }));
+
+            const embed = new EmbedBuilder()
+                .setColor(0x2b6cb0)
+                .setTitle(
+                    `━━━━━━━━━━━━━━━━━━━━━━━━━━\n` +
+                    `📝  **NOTABLE INTERACTIONS**\n` +
+                    `**Faction: ${faction}**\n` +
+                    `━━━━━━━━━━━━━━━━━━━━━━━━━━`
+                )
+                .addFields(fields);
+
+            return interaction.reply({ embeds: [embed] });
+
+        } catch (err) {
+            console.error("GETNOTES ERROR:", err);
+            return interaction.reply({ content: "There was an error accessing the Google Sheet." });
+        }
+    }
+
+    // ────────────────────────────────────────────────────────────
+    // NEW COMMAND HANDLERS: Reminders
+    // ────────────────────────────────────────────────────────────
+
+    // ────────────────
+    // /setreminder (Team Leader, Management, OR Team Guide)
+    // ────────────────
+    if (interaction.commandName === "setreminder") {
+        if (!hasRequiredRole(interaction, ["Team Leader", "Management", "Team Guide"])) {
+            return interaction.reply({ 
+                content: "You do not have permission to run this command. (Requires Team Leader, Management, or Team Guide role)", 
+                ephemeral: true 
+            });
+        }
+
+        const text = interaction.options.getString("text");
+        const time = interaction.options.getString("time");
+        const date = interaction.options.getString("date");
+        const recurrence = interaction.options.getString("recurrence") || "none";
+        const timezone = interaction.options.getString("timezone") || "UTC";
+        const visibility = interaction.options.getString("visibility") || "private";
+        const creator = interaction.user.username;
+        const creatorRole = getUserHighestRole(interaction, ["Management", "Team Leader", "Team Guide"]) || "Unknown";
+
+        try {
+            await interaction.deferReply({ ephemeral: true });
+
+            // Validate time format (HH:MM)
+            const timeRegex = /^([01]\d|2[0-3]):([0-5]\d)$/;
+            if (!timeRegex.test(time)) {
+                return interaction.editReply({ content: "❌ Invalid time format. Use HH:MM (24-hour format)." });
+            }
+
+            // Validate date format (YYYY-MM-DD)
+            const dateRegex = /^\d{4}-\d{2}-\d{2}$/;
+            if (!dateRegex.test(date)) {
+                return interaction.editReply({ content: "❌ Invalid date format. Use YYYY-MM-DD." });
+            }
+
+            // Ensure the tab exists
+            await ensureSheetTab("Reminders", [
+                "Reminder Text", "Time", "Date", "Recurrence", "Creator", "Creator Role", "Timezone", "Visibility"
+            ]);
+
+            // Add the reminder
+            const nextRow = await findNextRowInTab("Reminders", "A");
+            await sheets.spreadsheets.values.update({
+                spreadsheetId: GOOGLE_SHEET_ID,
+                range: `Reminders!A${nextRow}:H${nextRow}`,
+                valueInputOption: "USER_ENTERED",
+                requestBody: {
+                    values: [[text, time, date, recurrence, creator, creatorRole, timezone, visibility]]
+                }
+            });
+
+            return interaction.editReply({ 
+                content: `✅ Reminder set for ${date} at ${time} (${timezone}).\nVisibility: ${visibility}` 
+            });
+
+        } catch (err) {
+            console.error("SETREMINDER ERROR:", err);
+            try {
+                return interaction.editReply({ content: "There was an error updating the Google Sheet." });
+            } catch (e) {
+                return interaction.followUp({ content: "There was an error updating the Google Sheet.", ephemeral: true });
+            }
+        }
+    }
+
+    // ────────────────
+    // /listreminders (Public access with visibility rules)
+    // ────────────────
+    if (interaction.commandName === "listreminders") {
+        const username = interaction.user.username;
+        const userRole = getUserHighestRole(interaction, ["Management", "Team Leader", "Team Guide"]);
+
+        try {
+            // Check if tab exists
+            const sheetInfo = await sheets.spreadsheets.get({
+                spreadsheetId: GOOGLE_SHEET_ID
+            });
+            
+            const tabExists = sheetInfo.data.sheets.some(s => s.properties.title === "Reminders");
+            
+            if (!tabExists) {
+                const embedEmpty = new EmbedBuilder()
+                    .setColor(0x2b6cb0)
+                    .setTitle(
+                        `━━━━━━━━━━━━━━━━━━━━━━━━━━\n` +
+                        `⏰  **REMINDERS**\n` +
+                        `━━━━━━━━━━━━━━━━━━━━━━━━━━`
+                    )
+                    .addFields({ name: "⠀", value: "_No reminders found._" });
+
+                return interaction.reply({ embeds: [embedEmpty], ephemeral: true });
+            }
+
+            // Get reminders
+            const res = await sheets.spreadsheets.values.get({
+                spreadsheetId: GOOGLE_SHEET_ID,
+                range: "Reminders!A:H"
+            });
+
+            const rows = res.data.values || [];
+            
+            // Filter reminders based on visibility rules
+            let reminders = [];
+            for (let i = 1; i < rows.length; i++) {
+                const row = rows[i];
+                const reminderText = row[0] || "N/A";
+                const time = row[1] || "N/A";
+                const date = row[2] || "N/A";
+                const recurrence = row[3] || "none";
+                const creator = row[4] || "Unknown";
+                const creatorRole = row[5] || "Unknown";
+                const timezone = row[6] || "UTC";
+                const visibility = row[7] || "private";
+
+                // Visibility rules
+                const isCreator = creator === username;
+                const isSameRole = userRole && creatorRole === userRole;
+                const isPublic = visibility === "public";
+                const isRoleVisible = visibility === "role" && isSameRole;
+                const isPrivateVisible = visibility === "private" && isCreator;
+
+                if (isPublic || isRoleVisible || isPrivateVisible) {
+                    reminders.push({
+                        text: reminderText,
+                        time,
+                        date,
+                        recurrence,
+                        creator,
+                        timezone,
+                        visibility
+                    });
+                }
+            }
+
+            if (reminders.length === 0) {
+                const embedEmpty = new EmbedBuilder()
+                    .setColor(0x2b6cb0)
+                    .setTitle(
+                        `━━━━━━━━━━━━━━━━━━━━━━━━━━\n` +
+                        `⏰  **REMINDERS**\n` +
+                        `━━━━━━━━━━━━━━━━━━━━━━━━━━`
+                    )
+                    .addFields({ name: "⠀", value: "_No reminders found._" });
+
+                return interaction.reply({ embeds: [embedEmpty], ephemeral: true });
+            }
+
+            // Build reminder lines
+            const lines = reminders.map(r => {
+                const recurrenceText = r.recurrence !== "none" ? ` (${r.recurrence})` : "";
+                return `**${r.date}** at ${r.time} ${r.timezone}${recurrenceText}\n${r.text}\n_Created by: ${r.creator} | Visibility: ${r.visibility}_`;
+            });
+
+            // Chunk into fields
+            const fieldValues = chunkLinesToFieldValues(lines, 1024);
+            const fields = fieldValues.map(v => ({ name: "⠀", value: v }));
+
+            const embed = new EmbedBuilder()
+                .setColor(0x2b6cb0)
+                .setTitle(
+                    `━━━━━━━━━━━━━━━━━━━━━━━━━━\n` +
+                    `⏰  **REMINDERS**\n` +
+                    `━━━━━━━━━━━━━━━━━━━━━━━━━━`
+                )
+                .addFields(fields);
+
+            return interaction.reply({ embeds: [embed], ephemeral: true });
+
+        } catch (err) {
+            console.error("LISTREMINDERS ERROR:", err);
+            return interaction.reply({ 
+                content: "There was an error accessing the Google Sheet.", 
+                ephemeral: true 
+            });
         }
     }
 });
