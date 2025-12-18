@@ -230,6 +230,10 @@ const sceneCountCmd = new SlashCommandBuilder()
             .setAutocomplete(true)
     );
 
+const listScenesCmd = new SlashCommandBuilder()
+    .setName("listscenes")
+    .setDescription("List all available one-off scenes with run counts and participating factions.");
+
 // ───────────────────────────────────────────────
 // NEW COMMANDS: Notable Interactions
 // ───────────────────────────────────────────────
@@ -345,6 +349,7 @@ async function deployCommands() {
                     addSceneCmd.toJSON(),
                     logSceneCmd.toJSON(),
                     sceneCountCmd.toJSON(),
+                    listScenesCmd.toJSON(),
                     addNoteCmd.toJSON(),
                     getNotesCmd.toJSON(),
                     setReminderCmd.toJSON(),
@@ -1354,6 +1359,117 @@ client.on("interactionCreate", async interaction => {
         }
     }
 
+    // ────────────────
+    // /listscenes (Public access)
+    // ────────────────
+    if (interaction.commandName === "listscenes") {
+        try {
+            // Check if tab exists
+            const sheetInfo = await sheets.spreadsheets.get({
+                spreadsheetId: GOOGLE_SHEET_ID
+            });
+            
+            const tabExists = sheetInfo.data.sheets.some(s => s.properties.title === "One Off Scenes");
+            
+            if (!tabExists) {
+                const embedEmpty = new EmbedBuilder()
+                    .setColor(0x2b6cb0)
+                    .setTitle(
+                        `━━━━━━━━━━━━━━━━━━━━━━━━━━\n` +
+                        `🎭  **ALL ONE-OFF SCENES**\n` +
+                        `━━━━━━━━━━━━━━━━━━━━━━━━━━`
+                    )
+                    .addFields({ name: "⠀", value: "_No scenes found._" });
+
+                return interaction.reply({ embeds: [embedEmpty] });
+            }
+
+            // Get all scene data
+            const res = await sheets.spreadsheets.values.get({
+                spreadsheetId: GOOGLE_SHEET_ID,
+                range: "One Off Scenes!A:G"
+            });
+
+            const rows = res.data.values || [];
+            
+            if (rows.length <= 1) {
+                const embedEmpty = new EmbedBuilder()
+                    .setColor(0x2b6cb0)
+                    .setTitle(
+                        `━━━━━━━━━━━━━━━━━━━━━━━━━━\n` +
+                        `🎭  **ALL ONE-OFF SCENES**\n` +
+                        `━━━━━━━━━━━━━━━━━━━━━━━━━━`
+                    )
+                    .addFields({ name: "⠀", value: "_No scenes available._" });
+
+                return interaction.reply({ embeds: [embedEmpty] });
+            }
+
+            // Process all scenes
+            const sceneList = [];
+            for (let i = 1; i < rows.length; i++) {
+                const row = rows[i];
+                const sceneName = row[0] || "Unknown Scene";
+                const meridianOrPed = row[1] || "N/A";
+                const timesRun = parseInt(row[4] || "0", 10);
+                const participants = row[5] || "";
+                
+                // Get unique factions from participants
+                const participantList = participants.split(',').map(p => p.trim()).filter(p => p);
+                const uniqueFactions = [...new Set(participantList)];
+                const factionsList = uniqueFactions.length > 0 
+                    ? uniqueFactions.join(", ") 
+                    : "_No runs yet_";
+                
+                sceneList.push({
+                    name: sceneName,
+                    type: meridianOrPed,
+                    timesRun: timesRun,
+                    factions: factionsList
+                });
+            }
+
+            // Sort by times run (descending) then by name
+            sceneList.sort((a, b) => {
+                if (b.timesRun !== a.timesRun) {
+                    return b.timesRun - a.timesRun;
+                }
+                return a.name.localeCompare(b.name);
+            });
+
+            // Build scene display lines
+            const lines = sceneList.map(scene => 
+                `**${scene.name}** (${scene.type})\n` +
+                `• Times Run: ${scene.timesRun}\n` +
+                `• Factions: ${scene.factions}\n⠀`
+            );
+
+            // Chunk into fields
+            const fieldValues = chunkLinesToFieldValues(lines, 1024);
+            const fields = fieldValues.map(v => ({ name: "⠀", value: v }));
+
+            const embed = new EmbedBuilder()
+                .setColor(0x2b6cb0)
+                .setTitle(
+                    `━━━━━━━━━━━━━━━━━━━━━━━━━━\n` +
+                    `🎭  **ALL ONE-OFF SCENES**\n` +
+                    `**Total: ${sceneList.length} scene(s)**\n` +
+                    `━━━━━━━━━━━━━━━━━━━━━━━━━━`
+                )
+                .addFields(fields)
+                .setFooter({ text: "Sorted by times run" });
+
+            return interaction.reply({ embeds: [embed] });
+
+        } catch (err) {
+            console.error("LISTSCENES ERROR:", err);
+            return interaction.reply({ 
+                content: "There was an error accessing the Google Sheet.", 
+                ephemeral: true 
+            });
+        }
+    }
+
     // ────────────────────────────────────────────────────────────
     // NEW COMMAND HANDLERS: Notable Interactions
     // ────────────────────────────────────────────────────────────
@@ -1445,7 +1561,8 @@ client.on("interactionCreate", async interaction => {
             let notes = [];
             for (let i = 1; i < rows.length; i++) {
                 const row = rows[i];
-                if (row[0]?.toLowerCase().trim() === factionLower) {
+                // Check if row has data and faction matches
+                if (row && row.length > 0 && row[0]?.toLowerCase().trim() === factionLower) {
                     notes.push({
                         note: row[1] || "N/A",
                         createdBy: row[2] || "Unknown",
@@ -1456,12 +1573,24 @@ client.on("interactionCreate", async interaction => {
 
             // Filter by date if not showing all
             if (!showAll) {
-                const thirtyDaysAgo = new Date();
+                const today = new Date();
+                today.setHours(0, 0, 0, 0); // Start of today
+                const thirtyDaysAgo = new Date(today);
                 thirtyDaysAgo.setDate(thirtyDaysAgo.getDate() - 30);
                 
                 notes = notes.filter(n => {
+                    // Skip notes with no valid date
+                    if (!n.createdOn || n.createdOn === "Unknown") {
+                        return false;
+                    }
+                    // Parse the date and normalize to midnight
                     const noteDate = new Date(n.createdOn);
-                    return !isNaN(noteDate.getTime()) && noteDate >= thirtyDaysAgo;
+                    if (isNaN(noteDate.getTime())) {
+                        return false;
+                    }
+                    noteDate.setHours(0, 0, 0, 0);
+                    // Compare dates (both are now at midnight)
+                    return noteDate >= thirtyDaysAgo;
                 });
             }
 
@@ -1747,7 +1876,10 @@ client.on("interactionCreate", async interaction => {
                         `**\`/scenecount\`** - View faction's scene history\n` +
                         `• Roles: Everyone\n` +
                         `• Example: \`/scenecount faction:LSPD\`\n` +
-                        `• Shows all scenes from last 90 days with run counts\n⠀`
+                        `• Shows all scenes from last 90 days with run counts\n⠀\n` +
+                        `**\`/listscenes\`** - List all available scenes\n` +
+                        `• Roles: Everyone\n` +
+                        `• Shows all scenes with run counts and participating factions\n⠀`
                 },
                 {
                     name: "💬 **Notable Interactions**",
