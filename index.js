@@ -16,7 +16,7 @@ const DISCORD_TOKEN = process.env.DISCORD_TOKEN;
 const CLIENT_ID = process.env.CLIENT_ID;
 const GUILD_ID = process.env.GUILD_ID;
 const GOOGLE_CLIENT_EMAIL = process.env.GOOGLE_CLIENT_EMAIL;
-const GOOGLE_PRIVATE_KEY = process.env.GOOGLE_PRIVATE_KEY.replace(/\\n/g, "\n");
+const GOOGLE_PRIVATE_KEY = process.env.GOOGLE_PRIVATE_KEY ? process.env.GOOGLE_PRIVATE_KEY.replace(/\\n/g, "\n") : "";
 const GOOGLE_SHEET_ID = process.env.GOOGLE_SHEET_ID;
 
 // GOOGLE AUTH
@@ -32,7 +32,15 @@ const sheets = google.sheets({ version: "v4", auth });
 // ───────────────────────────────────────────────
 // REMINDER MANAGEMENT (IN-MEMORY)
 // ───────────────────────────────────────────────
+/**
+ * In-memory storage for reminders. Data will be lost on bot restart.
+ * @type {Map<string, Object>}
+ */
 const reminders = new Map();
+/**
+ * Timeout IDs for scheduled reminders. Used for cancellation.
+ * @type {Map<string, NodeJS.Timeout>}
+ */
 const reminderTimeouts = new Map();
 const MAX_TIMEOUT_DELAY = 2147483647; // ~24.8 days
 
@@ -53,7 +61,7 @@ async function setReminder(userId, reminderData) {
     const delay = reminderTime.getTime() - Date.now();
     if (delay > 0) {
         if (delay > MAX_TIMEOUT_DELAY) {
-            throw new Error(`Reminder time is too far in the future. Maximum delay is approximately 24 days.`);
+            throw new Error(`Reminder time is too far in the future. Maximum delay is approximately 24 days (requested delay: ${Math.round(delay / 86400000)} days).`);
         }
 
         const timeoutId = setTimeout(async () => {
@@ -1362,8 +1370,10 @@ client.on("interactionCreate", async interaction => {
             const timeStr = interaction.options.getString('time');
             const time = parseTimeString(timeStr);
 
-            if (!time || time < new Date()) {
-                await interaction.editReply('❌ Invalid time format or time is in the past. Use formats like "2024-12-25 10:00" or "in 2 hours".');
+            // Add 1-minute buffer to account for processing time
+            const minimumTime = new Date(Date.now() + 60000);
+            if (!time || time < minimumTime) {
+                await interaction.editReply('❌ Invalid time format or time is in the past. Reminders must be at least 1 minute in the future. Use formats like "2024-12-25 10:00" or "in 2 hours".');
                 return;
             }
 
