@@ -1411,6 +1411,8 @@ client.on("interactionCreate", async interaction => {
                 const row = rows[i];
                 const sceneName = row[0] || "Unknown Scene";
                 const meridianOrPed = row[1] || "N/A";
+                const sceneInfo = row[2] || "N/A";
+                const rewards = row[3] || "N/A";
                 const timesRun = parseInt(row[4] || "0", 10);
                 const participants = row[5] || "";
                 
@@ -1424,6 +1426,8 @@ client.on("interactionCreate", async interaction => {
                 sceneList.push({
                     name: sceneName,
                     type: meridianOrPed,
+                    info: sceneInfo,
+                    rewards: rewards,
                     timesRun: timesRun,
                     factions: factionsList
                 });
@@ -1437,9 +1441,11 @@ client.on("interactionCreate", async interaction => {
                 return a.name.localeCompare(b.name);
             });
 
-            // Build scene display lines
+            // Build scene display lines with all information
             const lines = sceneList.map(scene => 
                 `**${scene.name}** (${scene.type})\n` +
+                `• Scene Info: ${scene.info}\n` +
+                `• Rewards: ${scene.rewards}\n` +
                 `• Times Run: ${scene.timesRun}\n` +
                 `• Factions: ${scene.factions}\n⠀`
             );
