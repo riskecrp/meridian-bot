@@ -184,6 +184,25 @@ const addSceneCmd = new SlashCommandBuilder()
         o.setName("scene_name")
             .setDescription("Name of the scene")
             .setRequired(true)
+    )
+    .addStringOption(o =>
+        o.setName("meridian_or_ped")
+            .setDescription("Meridian or Ped")
+            .setRequired(true)
+            .addChoices(
+                { name: "Meridian", value: "Meridian" },
+                { name: "Ped", value: "Ped" }
+            )
+    )
+    .addStringOption(o =>
+        o.setName("scene_info")
+            .setDescription("Scene information/description")
+            .setRequired(true)
+    )
+    .addStringOption(o =>
+        o.setName("rewards")
+            .setDescription("Rewards for the scene")
+            .setRequired(true)
     );
 
 const logSceneCmd = new SlashCommandBuilder()
@@ -193,6 +212,7 @@ const logSceneCmd = new SlashCommandBuilder()
         o.setName("scene_name")
             .setDescription("Name of the scene")
             .setRequired(true)
+            .setAutocomplete(true)
     )
     .addStringOption(o =>
         o.setName("participants")
@@ -202,12 +222,7 @@ const logSceneCmd = new SlashCommandBuilder()
 
 const sceneCountCmd = new SlashCommandBuilder()
     .setName("scenecount")
-    .setDescription("Get total times a scene ran for a specific faction.")
-    .addStringOption(o =>
-        o.setName("scene_name")
-            .setDescription("Name of the scene")
-            .setRequired(true)
-    )
+    .setDescription("List all scenes a faction has done in the last 90 days with counts.")
     .addStringOption(o =>
         o.setName("faction")
             .setDescription("Faction name")
@@ -340,6 +355,7 @@ async function deployCommands() {
 // ───────────────────────────────────────────────
 
 let cachedFactions = [];
+let cachedScenes = [];
 
 async function loadFactions() {
     const res = await sheets.spreadsheets.values.get({
@@ -356,6 +372,33 @@ async function loadFactions() {
     }
 
     cachedFactions = [...set];
+}
+
+async function loadScenes() {
+    try {
+        // Check if tab exists
+        const sheetInfo = await sheets.spreadsheets.get({
+            spreadsheetId: GOOGLE_SHEET_ID
+        });
+        
+        const tabExists = sheetInfo.data.sheets.some(s => s.properties.title === "One Off Scenes");
+        
+        if (!tabExists) {
+            cachedScenes = [];
+            return;
+        }
+
+        const res = await sheets.spreadsheets.values.get({
+            spreadsheetId: GOOGLE_SHEET_ID,
+            range: "One Off Scenes!A:A"
+        });
+
+        const rows = res.data.values || [];
+        cachedScenes = rows.slice(1).map(row => row[0]).filter(name => name && name.trim());
+    } catch (err) {
+        console.error("Error loading scenes:", err);
+        cachedScenes = [];
+    }
 }
 
 // ───────────────────────────────────────────────
@@ -381,7 +424,22 @@ client.once("ready", () => {
 client.on("interactionCreate", async interaction => {
     if (!interaction.isAutocomplete()) return;
 
-    const focused = interaction.options.getFocused();
+    const focusedOption = interaction.options.getFocused(true);
+    const focused = focusedOption.value;
+
+    // Handle scene_name autocomplete for logscene command
+    if (focusedOption.name === "scene_name") {
+        if (cachedScenes.length === 0) await loadScenes();
+
+        const suggestions = cachedScenes
+            .filter(s => s.toLowerCase().includes(focused.toLowerCase()))
+            .slice(0, 25)
+            .map(s => ({ name: s, value: s }));
+
+        return interaction.respond(suggestions);
+    }
+
+    // Handle faction autocomplete (default)
     if (cachedFactions.length === 0) await loadFactions();
 
     const suggestions = cachedFactions
@@ -1025,12 +1083,17 @@ client.on("interactionCreate", async interaction => {
         }
 
         const sceneName = interaction.options.getString("scene_name");
+        const meridianOrPed = interaction.options.getString("meridian_or_ped");
+        const sceneInfo = interaction.options.getString("scene_info");
+        const rewards = interaction.options.getString("rewards");
 
         try {
             await interaction.deferReply({ ephemeral: true });
 
-            // Ensure the tab exists
-            await ensureSheetTab("One Off Scenes", ["Scene Name", "Times Run", "Participants", "Last Run Date"]);
+            // Ensure the tab exists with updated headers
+            await ensureSheetTab("One Off Scenes", [
+                "Scene Name", "Meridian or Ped", "Scene Info", "Rewards", "Times Run", "Participants", "Last Run Date"
+            ]);
 
             // Check for duplicates
             const res = await sheets.spreadsheets.values.get({
@@ -1044,16 +1107,19 @@ client.on("interactionCreate", async interaction => {
                 return interaction.editReply({ content: `❌ Scene "${sceneName}" already exists.` });
             }
 
-            // Add the scene
+            // Add the scene with new fields
             const nextRow = await findNextRowInTab("One Off Scenes", "A");
             await sheets.spreadsheets.values.update({
                 spreadsheetId: GOOGLE_SHEET_ID,
-                range: `One Off Scenes!A${nextRow}:D${nextRow}`,
+                range: `One Off Scenes!A${nextRow}:G${nextRow}`,
                 valueInputOption: "USER_ENTERED",
                 requestBody: {
-                    values: [[sceneName, 0, "", ""]]
+                    values: [[sceneName, meridianOrPed, sceneInfo, rewards, 0, "", ""]]
                 }
             });
+
+            // Refresh scene cache
+            await loadScenes();
 
             return interaction.editReply({ content: `✅ Scene "${sceneName}" added successfully.` });
 
@@ -1084,13 +1150,15 @@ client.on("interactionCreate", async interaction => {
         try {
             await interaction.deferReply({ ephemeral: true });
 
-            // Ensure the tab exists
-            await ensureSheetTab("One Off Scenes", ["Scene Name", "Times Run", "Participants", "Last Run Date"]);
+            // Ensure the tab exists with updated headers
+            await ensureSheetTab("One Off Scenes", [
+                "Scene Name", "Meridian or Ped", "Scene Info", "Rewards", "Times Run", "Participants", "Last Run Date"
+            ]);
 
-            // Find the scene
+            // Find the scene (now need to fetch all columns A:G)
             const res = await sheets.spreadsheets.values.get({
                 spreadsheetId: GOOGLE_SHEET_ID,
-                range: "One Off Scenes!A:D"
+                range: "One Off Scenes!A:G"
             });
 
             const rows = res.data.values || [];
@@ -1108,8 +1176,9 @@ client.on("interactionCreate", async interaction => {
             }
 
             const currentData = rows[sceneRow - 1];
-            const timesRun = parseInt(currentData[1] || "0") + 1;
-            const existingParticipants = currentData[2] || "";
+            // Columns: A=Scene Name, B=Meridian/Ped, C=Scene Info, D=Rewards, E=Times Run, F=Participants, G=Last Run Date
+            const timesRun = parseInt(currentData[4] || "0") + 1;
+            const existingParticipants = currentData[5] || "";
             const newParticipants = existingParticipants 
                 ? `${existingParticipants}, ${participants}` 
                 : participants;
@@ -1123,13 +1192,21 @@ client.on("interactionCreate", async interaction => {
             
             const lastRunDate = new Date().toISOString().slice(0, 10); // YYYY-MM-DD
 
-            // Update the row
+            // Update the row (preserve existing values for columns A-D)
             await sheets.spreadsheets.values.update({
                 spreadsheetId: GOOGLE_SHEET_ID,
-                range: `One Off Scenes!A${sceneRow}:D${sceneRow}`,
+                range: `One Off Scenes!A${sceneRow}:G${sceneRow}`,
                 valueInputOption: "USER_ENTERED",
                 requestBody: {
-                    values: [[sceneName, timesRun, newParticipants, lastRunDate]]
+                    values: [[
+                        currentData[0] || sceneName,  // Scene Name
+                        currentData[1] || "",          // Meridian or Ped
+                        currentData[2] || "",          // Scene Info
+                        currentData[3] || "",          // Rewards
+                        timesRun,                      // Times Run
+                        newParticipants,               // Participants
+                        lastRunDate                    // Last Run Date
+                    ]]
                 }
             });
 
@@ -1151,7 +1228,6 @@ client.on("interactionCreate", async interaction => {
     // /scenecount (Public access)
     // ────────────────
     if (interaction.commandName === "scenecount") {
-        const sceneName = interaction.options.getString("scene_name");
         const faction = interaction.options.getString("faction");
 
         try {
@@ -1163,47 +1239,99 @@ client.on("interactionCreate", async interaction => {
             const tabExists = sheetInfo.data.sheets.some(s => s.properties.title === "One Off Scenes");
             
             if (!tabExists) {
-                return interaction.reply({ 
-                    content: `Scene "${sceneName}" has not been run for faction "${faction}".`, 
-                    ephemeral: true 
-                });
+                const embedEmpty = new EmbedBuilder()
+                    .setColor(0x2b6cb0)
+                    .setTitle(
+                        `━━━━━━━━━━━━━━━━━━━━━━━━━━\n` +
+                        `📊  **SCENE COUNT**\n` +
+                        `**Faction: ${faction}**\n` +
+                        `━━━━━━━━━━━━━━━━━━━━━━━━━━`
+                    )
+                    .addFields({ name: "⠀", value: "_No scenes found._" });
+
+                return interaction.reply({ embeds: [embedEmpty] });
             }
 
-            // Get scene data
+            // Get all scene data
             const res = await sheets.spreadsheets.values.get({
                 spreadsheetId: GOOGLE_SHEET_ID,
-                range: "One Off Scenes!A:D"
+                range: "One Off Scenes!A:G"
             });
 
             const rows = res.data.values || [];
-            let sceneData = null;
+            const factionLower = faction.toLowerCase().trim();
+            const ninetyDaysAgo = new Date();
+            ninetyDaysAgo.setDate(ninetyDaysAgo.getDate() - 90);
+            
+            // Map to store scene counts
+            const sceneCounts = new Map();
 
+            // Process all scenes
             for (let i = 1; i < rows.length; i++) {
-                if (rows[i][0]?.toLowerCase().trim() === sceneName.toLowerCase().trim()) {
-                    sceneData = rows[i];
-                    break;
+                const row = rows[i];
+                const sceneName = row[0] || "Unknown Scene";
+                const participants = row[5] || ""; // Column F
+                const lastRunDate = row[6] || ""; // Column G
+                
+                // Check if scene was run in last 90 days
+                if (lastRunDate) {
+                    const runDate = new Date(lastRunDate);
+                    if (!isNaN(runDate.getTime()) && runDate < ninetyDaysAgo) {
+                        // Skip scenes not run in last 90 days
+                        continue;
+                    }
+                }
+                
+                // Parse participants and count faction occurrences
+                const participantList = participants.split(',').map(p => p.trim().toLowerCase());
+                const factionCount = participantList.filter(p => p === factionLower).length;
+                
+                if (factionCount > 0) {
+                    // Get total times run for this scene (column E)
+                    const totalTimesRun = parseInt(row[4] || "0");
+                    sceneCounts.set(sceneName, {
+                        factionRuns: factionCount,
+                        totalRuns: totalTimesRun
+                    });
                 }
             }
 
-            if (!sceneData) {
-                return interaction.reply({ 
-                    content: `Scene "${sceneName}" has not been run for faction "${faction}".`, 
-                    ephemeral: true 
-                });
+            if (sceneCounts.size === 0) {
+                const embedEmpty = new EmbedBuilder()
+                    .setColor(0x2b6cb0)
+                    .setTitle(
+                        `━━━━━━━━━━━━━━━━━━━━━━━━━━\n` +
+                        `📊  **SCENE COUNT**\n` +
+                        `**Faction: ${faction}**\n` +
+                        `━━━━━━━━━━━━━━━━━━━━━━━━━━`
+                    )
+                    .addFields({ name: "⠀", value: "_No scenes found for this faction in the last 90 days._" });
+
+                return interaction.reply({ embeds: [embedEmpty] });
             }
 
-            // Parse participants and count faction occurrences
-            const participants = sceneData[2] || "";
-            const participantList = participants.split(',').map(p => p.trim().toLowerCase());
-            const factionLower = faction.toLowerCase();
-            
-            // Count how many times the faction appears in participants (exact match)
-            const count = participantList.filter(p => p === factionLower).length;
+            // Build scene list
+            const lines = [];
+            for (const [sceneName, counts] of sceneCounts.entries()) {
+                lines.push(`**${sceneName}**\n• Total Runs: ${counts.totalRuns}`);
+            }
 
-            return interaction.reply({ 
-                content: `📊 Scene "${sceneName}" has been run **${count}** time(s) for faction "${faction}".`, 
-                ephemeral: true 
-            });
+            // Chunk into fields
+            const fieldValues = chunkLinesToFieldValues(lines, 1024);
+            const fields = fieldValues.map(v => ({ name: "⠀", value: v }));
+
+            const embed = new EmbedBuilder()
+                .setColor(0x2b6cb0)
+                .setTitle(
+                    `━━━━━━━━━━━━━━━━━━━━━━━━━━\n` +
+                    `📊  **SCENE COUNT**\n` +
+                    `**Faction: ${faction}**\n` +
+                    `**Last 90 Days**\n` +
+                    `━━━━━━━━━━━━━━━━━━━━━━━━━━`
+                )
+                .addFields(fields);
+
+            return interaction.reply({ embeds: [embed] });
 
         } catch (err) {
             console.error("SCENECOUNT ERROR:", err);
