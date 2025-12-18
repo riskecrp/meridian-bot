@@ -317,6 +317,14 @@ const listRemindersCmd = new SlashCommandBuilder()
     .setName("listreminders")
     .setDescription("Display your reminders and those shared with you.");
 
+// ───────────────────────────────────────────────
+// HELP COMMAND
+// ───────────────────────────────────────────────
+
+const helpCmd = new SlashCommandBuilder()
+    .setName("help")
+    .setDescription("Display help information about all available commands.");
+
 const rest = new REST({ version: "10" }).setToken(DISCORD_TOKEN);
 
 // ───────────────────────────────────────────────
@@ -340,7 +348,8 @@ async function deployCommands() {
                     addNoteCmd.toJSON(),
                     getNotesCmd.toJSON(),
                     setReminderCmd.toJSON(),
-                    listRemindersCmd.toJSON()
+                    listRemindersCmd.toJSON(),
+                    helpCmd.toJSON()
                 ] 
             }
         );
@@ -1681,6 +1690,97 @@ client.on("interactionCreate", async interaction => {
                 ephemeral: true 
             });
         }
+    }
+
+    // ────────────────────────────────────────────────────────────
+    // HELP COMMAND
+    // ────────────────────────────────────────────────────────────
+
+    if (interaction.commandName === "help") {
+        const embed = new EmbedBuilder()
+            .setColor(0x2b6cb0)
+            .setTitle(
+                `━━━━━━━━━━━━━━━━━━━━━━━━━━\n` +
+                `📚  **MERIDIAN BOT COMMANDS**\n` +
+                `━━━━━━━━━━━━━━━━━━━━━━━━━━`
+            )
+            .addFields(
+                {
+                    name: "📋 **Faction Information**",
+                    value: 
+                        `**\`/factioninfo\`** - Look up faction details\n` +
+                        `• Roles: Everyone\n` +
+                        `• Example: \`/factioninfo faction:Los Santos Police\`\n` +
+                        `• Shows command members, properties, and HQ locations\n⠀`
+                },
+                {
+                    name: "🏠 **Property Management**",
+                    value: 
+                        `**\`/addproperty\`** - Add a property reward\n` +
+                        `• Roles: Management\n` +
+                        `• Example: \`/addproperty date:2024-01-15 faction:LSPD address:123 Main St type:HQ\`\n⠀\n` +
+                        `**\`/listproperties\`** - List all recorded properties\n` +
+                        `• Roles: Management\n⠀\n` +
+                        `**\`/confiscateproperty\`** - Mark property as confiscated\n` +
+                        `• Roles: Management\n` +
+                        `• Example: \`/confiscateproperty faction:LSPD address:123 Main St\`\n⠀`
+                },
+                {
+                    name: "📝 **Dossiers**",
+                    value: 
+                        `**\`/adddossier person\`** - Add a person to database\n` +
+                        `• Roles: Team Lead, Management\n` +
+                        `• Example: \`/adddossier person faction:LSPD character:John Doe\`\n⠀\n` +
+                        `**\`/adddossier location\`** - Add a location to database\n` +
+                        `• Roles: Team Lead, Management\n` +
+                        `• Example: \`/adddossier location faction:LSPD address:HQ Building\`\n⠀`
+                },
+                {
+                    name: "🎭 **One-Off Scenes**",
+                    value: 
+                        `**\`/addscene\`** - Create a new scene\n` +
+                        `• Roles: Team Leader, Management\n` +
+                        `• Example: \`/addscene scene_name:Bank Heist meridian_or_ped:Meridian\`\n⠀\n` +
+                        `**\`/logscene\`** - Log a scene execution\n` +
+                        `• Roles: Team Leader, Management, Team Guide\n` +
+                        `• Example: \`/logscene scene_name:Bank Heist participants:LSPD, EMS\`\n⠀\n` +
+                        `**\`/scenecount\`** - View faction's scene history\n` +
+                        `• Roles: Everyone\n` +
+                        `• Example: \`/scenecount faction:LSPD\`\n` +
+                        `• Shows all scenes from last 90 days with run counts\n⠀`
+                },
+                {
+                    name: "💬 **Notable Interactions**",
+                    value: 
+                        `**\`/addnote\`** - Log a notable interaction\n` +
+                        `• Roles: Team Leader, Management, Team Guide\n` +
+                        `• Example: \`/addnote faction:LSPD note:Major drug bust\`\n⠀\n` +
+                        `**\`/getnotes\`** - View faction notes\n` +
+                        `• Roles: Everyone\n` +
+                        `• Example: \`/getnotes faction:LSPD all:true\`\n` +
+                        `• Default shows last 30 days, use \`all:true\` for full history\n⠀`
+                },
+                {
+                    name: "⏰ **Reminders**",
+                    value: 
+                        `**\`/setreminder\`** - Create a reminder\n` +
+                        `• Roles: Team Leader, Management, Team Guide\n` +
+                        `• Example: \`/setreminder text:Meeting time:14:00 date:2024-01-20\`\n` +
+                        `• Supports one-time or recurring (daily/weekly/monthly)\n⠀\n` +
+                        `**\`/listreminders\`** - View your reminders\n` +
+                        `• Roles: Everyone\n` +
+                        `• Shows reminders based on visibility (private/role/public)\n⠀`
+                },
+                {
+                    name: "ℹ️ **Help**",
+                    value: 
+                        `**\`/help\`** - Display this help message\n` +
+                        `• Roles: Everyone\n⠀`
+                }
+            )
+            .setFooter({ text: "Need assistance? Contact a Team Leader or Management member." });
+
+        return interaction.reply({ embeds: [embed], ephemeral: true });
     }
 });
 
