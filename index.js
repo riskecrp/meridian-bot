@@ -467,6 +467,17 @@ function chunkLinesToFieldValues(lines, maxLen = 1024) {
 // NEW HELPERS: Sheet Initialization & Utilities
 // ───────────────────────────────────────────────
 
+// Convert column number to Excel-style column letter (A, B, ..., Z, AA, AB, ...)
+function numberToColumnLetter(num) {
+    let letter = '';
+    while (num > 0) {
+        const remainder = (num - 1) % 26;
+        letter = String.fromCharCode(65 + remainder) + letter;
+        num = Math.floor((num - 1) / 26);
+    }
+    return letter;
+}
+
 // Ensure a sheet tab exists with specified headers
 async function ensureSheetTab(tabName, headers) {
     try {
@@ -492,9 +503,10 @@ async function ensureSheetTab(tabName, headers) {
         }
         
         // Check if headers exist
+        const lastCol = numberToColumnLetter(headers.length);
         const headerRes = await sheets.spreadsheets.values.get({
             spreadsheetId: GOOGLE_SHEET_ID,
-            range: `${tabName}!A1:${String.fromCharCode(64 + headers.length)}1`
+            range: `${tabName}!A1:${lastCol}1`
         });
         
         const existingHeaders = headerRes.data.values?.[0] || [];
@@ -503,7 +515,7 @@ async function ensureSheetTab(tabName, headers) {
         if (existingHeaders.length === 0) {
             await sheets.spreadsheets.values.update({
                 spreadsheetId: GOOGLE_SHEET_ID,
-                range: `${tabName}!A1:${String.fromCharCode(64 + headers.length)}1`,
+                range: `${tabName}!A1:${lastCol}1`,
                 valueInputOption: "USER_ENTERED",
                 requestBody: {
                     values: [headers]
@@ -1101,6 +1113,14 @@ client.on("interactionCreate", async interaction => {
             const newParticipants = existingParticipants 
                 ? `${existingParticipants}, ${participants}` 
                 : participants;
+            
+            // Check for cell size limit (Google Sheets limit is ~50,000 chars)
+            if (newParticipants.length > 45000) {
+                return interaction.editReply({ 
+                    content: `❌ Cannot log scene: participant list is too long. Consider archiving old participants.` 
+                });
+            }
+            
             const lastRunDate = new Date().toISOString().slice(0, 10); // YYYY-MM-DD
 
             // Update the row
@@ -1177,8 +1197,8 @@ client.on("interactionCreate", async interaction => {
             const participantList = participants.split(',').map(p => p.trim().toLowerCase());
             const factionLower = faction.toLowerCase();
             
-            // Count how many times the faction appears in participants
-            const count = participantList.filter(p => p.includes(factionLower)).length;
+            // Count how many times the faction appears in participants (exact match)
+            const count = participantList.filter(p => p === factionLower).length;
 
             return interaction.reply({ 
                 content: `📊 Scene "${sceneName}" has been run **${count}** time(s) for faction "${faction}".`, 
@@ -1379,10 +1399,15 @@ client.on("interactionCreate", async interaction => {
                 return interaction.editReply({ content: "❌ Invalid time format. Use HH:MM (24-hour format)." });
             }
 
-            // Validate date format (YYYY-MM-DD)
+            // Validate date format (YYYY-MM-DD) and check if it's a valid date
             const dateRegex = /^\d{4}-\d{2}-\d{2}$/;
             if (!dateRegex.test(date)) {
                 return interaction.editReply({ content: "❌ Invalid date format. Use YYYY-MM-DD." });
+            }
+            
+            const parsedDate = new Date(date);
+            if (isNaN(parsedDate.getTime())) {
+                return interaction.editReply({ content: "❌ Invalid date. Please provide a valid date." });
             }
 
             // Ensure the tab exists
