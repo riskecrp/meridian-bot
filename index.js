@@ -18,6 +18,7 @@ const GUILD_ID = process.env.GUILD_ID;
 const GOOGLE_CLIENT_EMAIL = process.env.GOOGLE_CLIENT_EMAIL;
 const GOOGLE_PRIVATE_KEY = process.env.GOOGLE_PRIVATE_KEY.replace(/\\n/g, "\n");
 const GOOGLE_SHEET_ID = process.env.GOOGLE_SHEET_ID;
+const REMINDER_CHANNEL_ID = process.env.REMINDER_CHANNEL_ID; // Channel where reminders will be posted
 
 // GOOGLE AUTH
 const auth = new google.auth.JWT(
@@ -416,6 +417,204 @@ async function loadScenes() {
 }
 
 // ───────────────────────────────────────────────
+// REMINDER NOTIFICATION SYSTEM
+// ───────────────────────────────────────────────
+
+async function checkAndSendReminders() {
+    try {
+        // Check if REMINDER_CHANNEL_ID is configured
+        if (!REMINDER_CHANNEL_ID) {
+            console.log("REMINDER_CHANNEL_ID not configured, skipping reminder check");
+            return;
+        }
+
+        // Check if Reminders tab exists
+        const sheetInfo = await sheets.spreadsheets.get({
+            spreadsheetId: GOOGLE_SHEET_ID
+        });
+        
+        const tabExists = sheetInfo.data.sheets.some(s => s.properties.title === "Reminders");
+        if (!tabExists) {
+            return; // No reminders sheet yet
+        }
+
+        // Get all reminders
+        const res = await sheets.spreadsheets.values.get({
+            spreadsheetId: GOOGLE_SHEET_ID,
+            range: "Reminders!A:H"
+        });
+
+        const rows = res.data.values || [];
+        if (rows.length <= 1) {
+            return; // No reminders (only header or empty)
+        }
+
+        const now = new Date();
+        const remindersToSend = [];
+        const remindersToUpdate = [];
+        const remindersToDelete = [];
+
+        // Process each reminder (skip header row)
+        for (let i = 1; i < rows.length; i++) {
+            const row = rows[i];
+            if (!row || row.length === 0) continue;
+
+            const reminderText = row[0] || "";
+            const time = row[1] || "";
+            const date = row[2] || "";
+            const recurrence = row[3] || "none";
+            const creator = row[4] || "Unknown";
+            const creatorRole = row[5] || "Unknown";
+            const timezone = row[6] || "UTC";
+            const visibility = row[7] || "private";
+
+            if (!reminderText || !time || !date) continue;
+
+            // Parse reminder datetime in the specified timezone
+            const reminderDateTimeStr = `${date}T${time}:00`;
+            let reminderDateTime;
+            
+            try {
+                // Parse as UTC first, then we'll adjust for display
+                reminderDateTime = new Date(reminderDateTimeStr + "Z");
+                
+                // Note: For proper timezone handling, we're treating the input as UTC
+                // In a production system, you'd want to use a library like luxon or date-fns-tz
+                if (isNaN(reminderDateTime.getTime())) continue;
+            } catch (err) {
+                console.error(`Invalid reminder datetime: ${reminderDateTimeStr}`, err);
+                continue;
+            }
+
+            // Check if reminder is due (within the last minute to current time)
+            const oneMinuteAgo = new Date(now.getTime() - 60000);
+            
+            if (reminderDateTime >= oneMinuteAgo && reminderDateTime <= now) {
+                // This reminder is due!
+                remindersToSend.push({
+                    text: reminderText,
+                    creator,
+                    creatorRole,
+                    visibility,
+                    recurrence,
+                    date,
+                    time,
+                    timezone,
+                    rowIndex: i
+                });
+
+                // Handle recurrence
+                if (recurrence !== "none") {
+                    // Calculate next occurrence
+                    let nextDate = new Date(reminderDateTime);
+                    
+                    switch (recurrence) {
+                        case "daily":
+                            nextDate.setDate(nextDate.getDate() + 1);
+                            break;
+                        case "weekly":
+                            nextDate.setDate(nextDate.getDate() + 7);
+                            break;
+                        case "monthly":
+                            nextDate.setMonth(nextDate.getMonth() + 1);
+                            break;
+                    }
+
+                    const nextDateStr = nextDate.toISOString().split('T')[0];
+                    remindersToUpdate.push({
+                        rowIndex: i + 1, // Sheet rows are 1-indexed
+                        values: [[reminderText, time, nextDateStr, recurrence, creator, creatorRole, timezone, visibility]]
+                    });
+                } else {
+                    // One-time reminder, mark for deletion
+                    remindersToDelete.push(i + 1); // Sheet rows are 1-indexed
+                }
+            }
+        }
+
+        // Send reminder notifications
+        if (remindersToSend.length > 0) {
+            const channel = await client.channels.fetch(REMINDER_CHANNEL_ID);
+            if (!channel || !channel.isTextBased()) {
+                console.error("Reminder channel not found or not text-based");
+                return;
+            }
+
+            for (const reminder of remindersToSend) {
+                // Build mention string based on visibility
+                let mention = "";
+                if (reminder.visibility === "public") {
+                    mention = "@here "; // Notify everyone online
+                } else if (reminder.visibility === "role") {
+                    // Try to find and mention the role
+                    const guild = await client.guilds.fetch(GUILD_ID);
+                    const role = guild.roles.cache.find(r => r.name === reminder.creatorRole);
+                    if (role) {
+                        mention = `<@&${role.id}> `;
+                    }
+                } else {
+                    // Private - try to mention the creator
+                    // Note: We only have username, not user ID, so we can't directly mention
+                    mention = `**${reminder.creator}** - `;
+                }
+
+                const recurrenceText = reminder.recurrence !== "none" ? ` (${reminder.recurrence})` : "";
+                const embed = new EmbedBuilder()
+                    .setColor(0xff9900) // Orange color for reminders
+                    .setTitle("⏰ Reminder")
+                    .setDescription(reminder.text)
+                    .addFields(
+                        { name: "Created by", value: reminder.creator, inline: true },
+                        { name: "Recurrence", value: reminder.recurrence === "none" ? "One-time" : reminder.recurrence, inline: true }
+                    )
+                    .setTimestamp();
+
+                await channel.send({
+                    content: mention.trim(),
+                    embeds: [embed]
+                });
+
+                console.log(`Sent reminder: "${reminder.text}" (${reminder.visibility})`);
+            }
+        }
+
+        // Update recurring reminders with next occurrence date
+        for (const update of remindersToUpdate) {
+            await sheets.spreadsheets.values.update({
+                spreadsheetId: GOOGLE_SHEET_ID,
+                range: `Reminders!A${update.rowIndex}:H${update.rowIndex}`,
+                valueInputOption: "USER_ENTERED",
+                requestBody: {
+                    values: update.values
+                }
+            });
+        }
+
+        // Delete one-time reminders (in reverse order to maintain indices)
+        for (const rowIndex of remindersToDelete.reverse()) {
+            await sheets.spreadsheets.batchUpdate({
+                spreadsheetId: GOOGLE_SHEET_ID,
+                requestBody: {
+                    requests: [{
+                        deleteDimension: {
+                            range: {
+                                sheetId: sheetInfo.data.sheets.find(s => s.properties.title === "Reminders").properties.sheetId,
+                                dimension: "ROWS",
+                                startIndex: rowIndex - 1,
+                                endIndex: rowIndex
+                            }
+                        }
+                    }]
+                }
+            });
+        }
+
+    } catch (err) {
+        console.error("Error checking reminders:", err);
+    }
+}
+
+// ───────────────────────────────────────────────
 // DISCORD CLIENT
 // ───────────────────────────────────────────────
 
@@ -429,6 +628,16 @@ client.once("ready", () => {
         activities: [{ name: "Waiting for associate request...", type: 3 }],
         status: "online"
     });
+
+    // Start reminder checker - runs every minute
+    if (REMINDER_CHANNEL_ID) {
+        console.log("Starting reminder notification system...");
+        setInterval(checkAndSendReminders, 60000); // Check every 60 seconds
+        // Also check immediately on startup
+        checkAndSendReminders();
+    } else {
+        console.warn("REMINDER_CHANNEL_ID not configured. Reminder notifications disabled.");
+    }
 });
 
 // ───────────────────────────────────────────────
