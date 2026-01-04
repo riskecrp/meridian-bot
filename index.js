@@ -486,10 +486,12 @@ async function checkAndSendReminders() {
                 continue;
             }
 
-            // Check if reminder is due (within the last minute to current time)
-            const oneMinuteAgo = new Date(now.getTime() - 60000);
+            // Check if reminder is due (within current minute only to prevent duplicates)
+            // We check if the reminder time matches the current minute
+            const currentMinute = new Date(now.getFullYear(), now.getMonth(), now.getDate(), now.getHours(), now.getMinutes(), 0, 0);
+            const reminderMinute = new Date(reminderDateTime.getFullYear(), reminderDateTime.getMonth(), reminderDateTime.getDate(), reminderDateTime.getHours(), reminderDateTime.getMinutes(), 0, 0);
             
-            if (reminderDateTime >= oneMinuteAgo && reminderDateTime <= now) {
+            if (currentMinute.getTime() === reminderMinute.getTime()) {
                 // This reminder is due!
                 remindersToSend.push({
                     text: reminderText,
@@ -540,14 +542,20 @@ async function checkAndSendReminders() {
                 return;
             }
 
+            // Cache guild for role lookups
+            let guild = null;
+            const needsGuild = remindersToSend.some(r => r.visibility === "role");
+            if (needsGuild) {
+                guild = await client.guilds.fetch(GUILD_ID);
+            }
+
             for (const reminder of remindersToSend) {
                 // Build mention string based on visibility
                 let mention = "";
                 if (reminder.visibility === "public") {
                     mention = "@here "; // Notify everyone online
-                } else if (reminder.visibility === "role") {
+                } else if (reminder.visibility === "role" && guild) {
                     // Try to find and mention the role
-                    const guild = await client.guilds.fetch(GUILD_ID);
                     const role = guild.roles.cache.find(r => r.name === reminder.creatorRole);
                     if (role) {
                         mention = `<@&${role.id}> `;
@@ -558,7 +566,6 @@ async function checkAndSendReminders() {
                     mention = `**${reminder.creator}** - `;
                 }
 
-                const recurrenceText = reminder.recurrence !== "none" ? ` (${reminder.recurrence})` : "";
                 const embed = new EmbedBuilder()
                     .setColor(0xff9900) // Orange color for reminders
                     .setTitle("⏰ Reminder")
