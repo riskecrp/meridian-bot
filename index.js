@@ -428,15 +428,16 @@ async function checkAndSendReminders() {
             return;
         }
 
-        // Check if Reminders tab exists
+        // Check if Reminders tab exists and get its sheet ID
         const sheetInfo = await sheets.spreadsheets.get({
             spreadsheetId: GOOGLE_SHEET_ID
         });
         
-        const tabExists = sheetInfo.data.sheets.some(s => s.properties.title === "Reminders");
-        if (!tabExists) {
+        const remindersSheet = sheetInfo.data.sheets.find(s => s.properties.title === "Reminders");
+        if (!remindersSheet) {
             return; // No reminders sheet yet
         }
+        const remindersSheetId = remindersSheet.properties.sheetId;
 
         // Get all reminders
         const res = await sheets.spreadsheets.values.get({
@@ -598,14 +599,15 @@ async function checkAndSendReminders() {
         }
 
         // Delete one-time reminders (in reverse order to maintain indices)
-        for (const rowIndex of remindersToDelete.reverse()) {
+        // Use slice().reverse() to avoid mutating the original array
+        for (const rowIndex of remindersToDelete.slice().reverse()) {
             await sheets.spreadsheets.batchUpdate({
                 spreadsheetId: GOOGLE_SHEET_ID,
                 requestBody: {
                     requests: [{
                         deleteDimension: {
                             range: {
-                                sheetId: sheetInfo.data.sheets.find(s => s.properties.title === "Reminders").properties.sheetId,
+                                sheetId: remindersSheetId,
                                 dimension: "ROWS",
                                 startIndex: rowIndex - 1,
                                 endIndex: rowIndex
