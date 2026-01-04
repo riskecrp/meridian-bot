@@ -55,6 +55,11 @@ The bot includes an automated reminder notification system that checks for due r
 - **Role**: All users with the same role as the creator will be mentioned
 - **Public**: All online users in the channel will be notified with @here
 
+### Current Limitations
+
+- **Timezone Support**: Currently, all reminder times are treated as UTC. The timezone parameter is stored but not actively used. For proper timezone support, consider setting reminders in UTC or adjusting times manually for your timezone.
+- **Private Mentions**: Private reminders display the creator's username in bold but don't create Discord mentions (which require storing Discord user IDs). Users with private reminders should monitor the reminder channel or use role/public visibility for actual notifications.
+
 ## Commands
 
 - `/factioninfo` - Look up faction information
