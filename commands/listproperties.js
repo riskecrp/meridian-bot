@@ -10,11 +10,11 @@ export default {
     async execute(interaction) {
         // Role Check: Management Only
         const memberRoles = interaction.member?.roles?.cache;
-        const hasManagement = memberRoles ? memberRoles.some(r => r.name === "Management") : false;
+        const hasManagement = memberRoles ? memberRoles.some(r => r.name === "[ECRP] FM Leadership") : false;
 
         if (!hasManagement) {
             return interaction.reply({ 
-                content: "You do not have permission to run this command. (Requires Management role)", 
+                content: "You do not have permission to run this command. (Requires [ECRP] FM Leadership role)", 
                 ephemeral: true 
             });
         }
