@@ -91,3 +91,37 @@ export async function replyWithPaginatedEmbed(interaction, lines, title) {
 
     return interaction.reply({ embeds: [fallbackEmbed], files: [attachment] });
 }
+
+/**
+ * Resolves a target string into a mention.
+ * Detects if the string is ALREADY a ping (<@...>) and returns it as-is.
+ */
+export async function resolvePing(guild, type, value) {
+    if (!value) return "@Unknown";
+    const raw = value.trim();
+
+    // 1. If it looks like <@12345...> or <@&12345...>, IT IS ALREADY A PING.
+    if (raw.startsWith('<') && raw.endsWith('>')) {
+        return raw;
+    }
+
+    // 2. Clean the input for searching (remove @ temporarily)
+    const cleanValue = raw.replace(/^@+/, '').toLowerCase();
+    
+    try {
+        if (type === "role") {
+            const roles = await guild.roles.fetch();
+            const role = roles.find(r => r.name.toLowerCase() === cleanValue);
+            if (role) return `<@&${role.id}>`;
+        } else {
+            const members = await guild.members.fetch();
+            const member = members.find(m => m.user.username.toLowerCase() === cleanValue);
+            if (member) return `<@${member.id}>`;
+        }
+    } catch (e) { 
+        console.error("Ping Resolution Error:", e.message);
+    }
+
+    // 3. Fallback: If search failed, just assume user wants text.
+    return raw.startsWith('@') ? raw : `@${raw}`;
+}
