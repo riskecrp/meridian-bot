@@ -1,9 +1,9 @@
-// index.js
 import fs from 'node:fs';
 import path from 'node:path';
-import { fileURLToPath } from 'url';
+import { fileURLToPath, pathToFileURL } from 'url'; // Added pathToFileURL
 import { Client, Collection, Events, GatewayIntentBits, REST, Routes } from 'discord.js';
 import dotenv from 'dotenv';
+import { startReminderCron } from "./jobs/reminderCron.js"; // <--- IMPORT THE CRON JOB
 
 dotenv.config();
 
@@ -21,7 +21,6 @@ client.commands = new Collection();
 
 // 1. LOAD COMMANDS
 const commandsPath = path.join(__dirname, 'commands');
-// Ensure commands folder exists
 if (!fs.existsSync(commandsPath)) {
     fs.mkdirSync(commandsPath);
 }
@@ -33,24 +32,17 @@ console.log(`[SYSTEM] Loading ${commandFiles.length} commands...`);
 
 for (const file of commandFiles) {
     const filePath = path.join(commandsPath, file);
-    // Dynamic import for ES Modules
+    // Dynamic import needs file:// prefix on Linux/Railway
     const command = await import(pathToFileURL(filePath).href);
 
     if ('data' in command.default && 'execute' in command.default) {
         client.commands.set(command.default.data.name, command.default);
         commandsToRegister.push(command.default.data.toJSON());
         console.log(`  -> Loaded: ${command.default.data.name}`);
-    } else {
-        console.log(`[WARNING] The command at ${filePath} is missing a required "data" or "execute" property.`);
     }
 }
 
-// Helper for Windows/Linux path compatibility in imports
-function pathToFileURL(path) {
-    return new URL('file://' + path);
-}
-
-// 2. DEPLOY COMMANDS (Register with Discord)
+// 2. DEPLOY COMMANDS
 const rest = new REST().setToken(process.env.DISCORD_TOKEN);
 
 (async () => {
@@ -74,12 +66,12 @@ client.once(Events.ClientReady, c => {
         status: "online"
     });
     
-    // Start your Cron/Tick here if you have one
-    setInterval(() => console.log('[CRON] Tick.'), 60000); 
+    // START THE REAL CRON JOB
+    startReminderCron(client); 
+    console.log("[SYSTEM] Reminder Cron Started.");
 });
 
 client.on(Events.InteractionCreate, async interaction => {
-    // Handle Chat Commands
     if (interaction.isChatInputCommand()) {
         const command = interaction.client.commands.get(interaction.commandName);
         if (!command) return;
@@ -88,22 +80,18 @@ client.on(Events.InteractionCreate, async interaction => {
             await command.execute(interaction);
         } catch (error) {
             console.error(error);
-            if (interaction.replied || interaction.deferred) {
-                await interaction.followUp({ content: 'There was an error executing this command!', ephemeral: true });
+            if (!interaction.replied && !interaction.deferred) {
+                await interaction.reply({ content: 'Error executing command.', ephemeral: true });
             } else {
-                await interaction.reply({ content: 'There was an error executing this command!', ephemeral: true });
+                await interaction.followUp({ content: 'Error executing command.', ephemeral: true });
             }
         }
-    } 
-    // Handle Autocomplete
-    else if (interaction.isAutocomplete()) {
+    } else if (interaction.isAutocomplete()) {
         const command = interaction.client.commands.get(interaction.commandName);
         if (!command) return;
 
         try {
-            if (command.autocomplete) {
-                await command.autocomplete(interaction);
-            }
+            if (command.autocomplete) await command.autocomplete(interaction);
         } catch (error) {
             console.error(error);
         }
