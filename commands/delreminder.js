@@ -1,100 +1,113 @@
 import { SlashCommandBuilder } from "discord.js";
 import { sheets, GOOGLE_SHEET_ID } from "../utils/googleClient.js";
 
+// --- HELPER: Find Reminders Created by Username ---
+async function getMyReminders(username) {
+    try {
+        const res = await sheets.spreadsheets.values.get({
+            spreadsheetId: GOOGLE_SHEET_ID,
+            range: "Reminders!A2:H999" // We need up to Col H (Creator)
+        });
+        const rows = res.data.values || [];
+        
+        // Map rows to objects
+        // Schema: 0=Text, 1=Time, 2=Date, ... 7=Creator
+        return rows.map((r, i) => ({
+            index: i + 2, // Sheet Row Index (1-based, +1 for header)
+            text: r[0],
+            date: r[2],
+            time: r[1],
+            creator: r[7] // Column H
+        })).filter(r => r.creator === username);
+
+    } catch (err) {
+        console.error("Error fetching reminders:", err);
+        return [];
+    }
+}
+
+// --- HELPER: Get Sheet ID (Needed for deletion) ---
+async function getSheetId(title) {
+    try {
+        const res = await sheets.spreadsheets.get({ spreadsheetId: GOOGLE_SHEET_ID });
+        const sheet = res.data.sheets.find(s => s.properties.title === title);
+        return sheet ? sheet.properties.sheetId : null;
+    } catch (err) { return null; }
+}
+
 export default {
     data: new SlashCommandBuilder()
         .setName("delreminder")
-        .setDescription("Delete one of your active reminders.")
-        .addStringOption(o =>
-            o.setName("reminder")
-                .setDescription("Search for your reminder to delete")
+        .setDescription("Delete a reminder you created.")
+        .addStringOption(option => 
+            option.setName("reminder")
+                .setDescription("Select the reminder to delete")
                 .setRequired(true)
                 .setAutocomplete(true)
         ),
 
     async autocomplete(interaction) {
-        const focusedValue = interaction.options.getFocused().toLowerCase();
-        const userId = interaction.user.id;
+        const focused = interaction.options.getFocused().toLowerCase();
+        
+        // Filter by USERNAME, not ID
+        const myReminders = await getMyReminders(interaction.user.username);
 
-        try {
-            // Fetch first 200 rows to find user's reminders
-            // (Assuming most recent are at the top or bottom depending on how you add them, 
-            // but fetching a chunk is safer than fetching 9999)
-            const res = await sheets.spreadsheets.values.get({
-                spreadsheetId: GOOGLE_SHEET_ID,
-                range: "Reminders!A2:O200" 
-            });
+        const choices = myReminders.map(r => ({
+            name: `${r.date} ${r.time}: ${r.text.slice(0, 30)}...`,
+            value: r.index.toString()
+        }));
 
-            const rows = res.data.values || [];
-            const myReminders = [];
-
-            for (let i = 0; i < rows.length; i++) {
-                const row = rows[i];
-                if (!row) continue;
-
-                const text = row[0] || "No text";
-                const date = row[2] || "No date";
-                const time = row[1] || "No time";
-                const creatorId = row[8];   // Column I
-                const status = row[12];     // Column M
-
-                // Only show ACTIVE reminders owned by THIS USER
-                if (creatorId === userId && status === "active") {
-                    // We send the ROW INDEX (i + 2) as the value so we know exactly which line to delete
-                    myReminders.push({
-                        name: `${date} ${time} | ${text.substring(0, 50)}...`,
-                        value: (i + 2).toString() 
-                    });
-                }
-            }
-
-            // Filter choices based on what the user types
-            const filtered = myReminders
-                .filter(r => r.name.toLowerCase().includes(focusedValue))
-                .slice(0, 25); // Discord limit is 25 choices
-
-            await interaction.respond(filtered);
-
-        } catch (err) {
-            console.error("Autocomplete Error:", err);
-            await interaction.respond([]);
-        }
+        const filtered = choices.filter(c => c.name.toLowerCase().includes(focused)).slice(0, 25);
+        await interaction.respond(filtered);
     },
 
     async execute(interaction) {
-        const rowIndex = interaction.options.getString("reminder");
-        const userId = interaction.user.id;
-
         await interaction.deferReply({ ephemeral: true });
+        const rowNum = parseInt(interaction.options.getString("reminder"));
+
+        if (isNaN(rowNum)) {
+            return interaction.editReply("❌ Invalid selection.");
+        }
 
         try {
-            // 1. Verify ownership (Security Check)
+            // Verify ownership (Column H / Index 7)
+            // We fetch the specific row to be safe
             const checkRes = await sheets.spreadsheets.values.get({
                 spreadsheetId: GOOGLE_SHEET_ID,
-                range: `Reminders!I${rowIndex}` // Check CreatorID column
+                range: `Reminders!H${rowNum}` // Column H is Creator
             });
             
-            const ownerId = checkRes.data.values?.[0]?.[0];
+            const realCreator = checkRes.data.values?.[0]?.[0];
 
-            if (ownerId !== userId) {
-                return interaction.editReply("❌ Error: You can only delete reminders you created.");
+            if (realCreator !== interaction.user.username) {
+                return interaction.editReply("❌ You cannot delete a reminder you didn't create.");
             }
 
-            // 2. Mark as Deleted
-            // We set status to "deleted" instead of wiping the row. 
-            // The Cron job ignores anything that isn't "active".
-            await sheets.spreadsheets.values.update({
+            // Perform Deletion
+            const sheetId = await getSheetId("Reminders");
+            if (!sheetId) return interaction.editReply("❌ Error: Reminders sheet not found.");
+
+            await sheets.spreadsheets.batchUpdate({
                 spreadsheetId: GOOGLE_SHEET_ID,
-                range: `Reminders!M${rowIndex}`, // Status Column
-                valueInputOption: "USER_ENTERED",
-                requestBody: { values: [["deleted"]] }
+                requestBody: {
+                    requests: [{
+                        deleteDimension: {
+                            range: {
+                                sheetId: sheetId,
+                                dimension: "ROWS",
+                                startIndex: rowNum - 1, // API is 0-based
+                                endIndex: rowNum
+                            }
+                        }
+                    }]
+                }
             });
 
-            return interaction.editReply(`✅ **Reminder Deleted.**`);
+            return interaction.editReply("🗑️ Reminder deleted successfully.");
 
         } catch (err) {
-            console.error("DELREMINDER ERROR:", err);
-            return interaction.editReply("❌ Database Error: Could not delete reminder.");
+            console.error("DelReminder Error:", err);
+            return interaction.editReply("❌ Error deleting reminder.");
         }
     }
 };
