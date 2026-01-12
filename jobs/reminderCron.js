@@ -7,7 +7,7 @@ import { resolvePing } from "../utils/helpers.js";
 export function startReminderCron(client) {
     // Run every minute
     cron.schedule("* * * * *", async () => {
-        console.log(`[CRON] Tick.`);
+        console.log(`[CRON] Tick. Checking...`); // LOG 1: Heartbeat
         
         try {
             const res = await sheets.spreadsheets.values.get({ 
@@ -16,43 +16,73 @@ export function startReminderCron(client) {
             });
             
             const rows = res.data.values || [];
-            if (rows.length === 0) return;
+            if (rows.length === 0) {
+                console.log("[CRON] No reminders found in sheet.");
+                return;
+            }
 
             const now = DateTime.now().setZone("UTC");
-            
-            // Fetch Guild (Assuming single guild from ENV)
+            console.log(`[CRON] System Time (UTC): ${now.toFormat("HH:mm")}`);
+
             const guild = await client.guilds.fetch(process.env.GUILD_ID).catch(() => null);
-            if (!guild) return console.error("[CRON] Could not fetch guild.");
+            if (!guild) {
+                console.error("[CRON] ERROR: Could not fetch Guild. Check GUILD_ID in variables.");
+                return;
+            }
 
             for (let i = 0; i < rows.length; i++) {
                 try {
                     const r = rows[i];
-                    let status = r[12]?.trim().toLowerCase(); // Column M
+                    let status = r[12]?.trim().toLowerCase(); 
                     
-                    // SKIP completed rows
-                    if (!r || !status || status === "completed") continue;
+                    if (!r || status === "completed") continue;
 
-                    // Parse UTC Time from Columns E (Time) and F (Date)
-                    let timeStr = r[4]?.trim();
-                    let dateStr = r[5]?.trim();
+                    // DEBUGGING DATA
+                    let timeStr = r[4]?.trim(); // Column E (UTC Time)
+                    let dateStr = r[5]?.trim(); // Column F (UTC Date)
+                    
+                    // Fix HH:MM padding if needed
                     if (timeStr && timeStr.indexOf(":") > -1 && timeStr.length < 5) timeStr = timeStr.padStart(5, "0");
 
-                    const rDt = DateTime.fromISO(`${dateStr}T${timeStr}`, { zone: "UTC" });
-                    if (!rDt.isValid) continue;
+                    // Try parsing
+                    // We try ISO format first (YYYY-MM-DD), then slash format (MM/DD/YYYY) just in case Sheets messed it up
+                    let rDt = DateTime.fromISO(`${dateStr}T${timeStr}`, { zone: "UTC" });
+                    
+                    if (!rDt.isValid) {
+                        // Fallback: Try parsing M/d/yyyy format if Google Sheets auto-formatted it
+                        rDt = DateTime.fromFormat(`${dateStr} ${timeStr}`, "M/d/yyyy HH:mm", { zone: "UTC" });
+                    }
+
+                    if (!rDt.isValid) {
+                        console.log(`[CRON] Row ${i+2} Invalid Date: "${dateStr} ${timeStr}"`);
+                        continue;
+                    }
 
                     const diffMinutes = rDt.diff(now, 'minutes').minutes;
-                    const chanId = r[13]; // Column N
                     
-                    const channel = await guild.channels.fetch(chanId).catch(() => null);
-                    if (!channel) continue;
+                    // LOGGING THE MATH
+                    // Only log active rows to keep logs cleanish
+                    if (status === "active") {
+                        console.log(`[CRON] Row ${i+2}: Target ${rDt.toFormat("HH:mm")} | Now ${now.toFormat("HH:mm")} | Diff: ${diffMinutes.toFixed(2)} mins`);
+                    }
 
-                    // ─── 1. 30-MINUTE WARNING ───
-                    // Condition: Between 20 and 30 mins remaining AND status is 'active'
+                    const chanId = r[13]; 
+                    const channel = await guild.channels.fetch(chanId).catch(() => null);
+                    
+                    if (!channel) {
+                        console.log(`[CRON] Row ${i+2}: Channel ${chanId} not found.`);
+                        continue;
+                    }
+
+                    // ─── CHECK TRIGGER ───
+                    
+                    // 1. 30-MINUTE WARNING (20 to 30 mins)
                     if (status === "active" && diffMinutes <= 30 && diffMinutes > 20) {
-                        const mention = await resolvePing(guild, r[10], r[11]); // Type (K), Value (L)
+                        console.log(`[CRON] Triggering WARNING for Row ${i+2}`);
+                        const mention = await resolvePing(guild, r[10], r[11]);
                         
                         const embed = new EmbedBuilder()
-                            .setColor(0xffa500) // Orange
+                            .setColor(0xffa500)
                             .setTitle("⏰ 30 Minute Reminder")
                             .setDescription(`**Event:** ${r[0]}\n**Time:** <t:${Math.floor(rDt.toSeconds())}:R>`);
 
@@ -62,21 +92,19 @@ export function startReminderCron(client) {
                             allowedMentions: { parse: ['users', 'roles'] }
                         });
 
-                        // Update Status to "warned" (Column M)
-                        // Note: i + 2 because rows are 0-indexed and we skipped header (Row 1)
                         await sheets.spreadsheets.values.update({
                             spreadsheetId: GOOGLE_SHEET_ID, range: `Reminders!M${i + 2}`,
                             valueInputOption: "USER_ENTERED", requestBody: { values: [["warned"]] }
                         });
                     }
 
-                    // ─── 2. FINAL ALERT ───
-                    // Condition: Between 0 and -10 mins (passed recently)
+                    // 2. FINAL ALERT (0 to -10 mins)
                     if (diffMinutes <= 0 && diffMinutes > -10) {
+                        console.log(`[CRON] Triggering FINAL ALERT for Row ${i+2}`);
                         const mention = await resolvePing(guild, r[10], r[11]);
 
                         const embed = new EmbedBuilder()
-                            .setColor(0xff0000) // Red
+                            .setColor(0xff0000)
                             .setTitle("🔔 Last Reminder")
                             .setDescription(`**Happening Now:** ${r[0]}`);
 
@@ -86,24 +114,20 @@ export function startReminderCron(client) {
                             allowedMentions: { parse: ['users', 'roles'] }
                         });
 
-                        // ─── HANDLE COMPLETION / RECURRENCE ───
-                        const recurrence = r[6]?.toLowerCase(); // Column G
-                        
+                        // MARK COMPLETE / RECUR
+                        const recurrence = r[6]?.toLowerCase();
                         if (recurrence === "none" || !recurrence) {
-                            // Mark Completed
                             await sheets.spreadsheets.values.update({
                                 spreadsheetId: GOOGLE_SHEET_ID, range: `Reminders!M${i + 2}`,
-                                valueInputOption: "USER_ENTERED", 
-                                requestBody: { values: [["completed"]] }
+                                valueInputOption: "USER_ENTERED", requestBody: { values: [["completed"]] }
                             });
                         } else {
-                            // Calculate Next Occurrence
+                            // Handle recurrence logic...
                             let nextDt = rDt;
                             if (recurrence === "daily") nextDt = rDt.plus({ days: 1 });
                             if (recurrence === "weekly") nextDt = rDt.plus({ weeks: 1 });
                             if (recurrence === "monthly") nextDt = rDt.plus({ months: 1 });
 
-                            // Update UTC Time/Date (Cols E & F) AND Reset Status (Col M)
                             await sheets.spreadsheets.values.update({
                                 spreadsheetId: GOOGLE_SHEET_ID, range: `Reminders!E${i + 2}:F${i + 2}`,
                                 valueInputOption: "USER_ENTERED", 
@@ -111,8 +135,7 @@ export function startReminderCron(client) {
                             });
                             await sheets.spreadsheets.values.update({
                                 spreadsheetId: GOOGLE_SHEET_ID, range: `Reminders!M${i + 2}`,
-                                valueInputOption: "USER_ENTERED", 
-                                requestBody: { values: [["active"]] }
+                                valueInputOption: "USER_ENTERED", requestBody: { values: [["active"]] }
                             });
                         }
                     }
