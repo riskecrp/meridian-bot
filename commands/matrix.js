@@ -1,30 +1,53 @@
 import { SlashCommandBuilder, EmbedBuilder } from "discord.js";
 import { sheets, GOOGLE_SHEET_ID } from "../utils/googleClient.js";
 
+// --- HELPER: Get List of Factions from FactionData ---
+async function getFactionDataNames() {
+    try {
+        const res = await sheets.spreadsheets.values.get({
+            spreadsheetId: GOOGLE_SHEET_ID,
+            range: "FactionData!A2:A999" // Skipping Header Row 1
+        });
+        const rows = res.data.values || [];
+        return rows.flat().map(f => f.trim()).filter(f => f);
+    } catch (err) {
+        console.error("Error fetching FactionData names:", err);
+        return [];
+    }
+}
+
 // --- HELPER: Find Row Number by Faction Name ---
-// Returns the 1-based row number (e.g., 5) or null if not found
 async function findFactionRow(sheetName, factionName) {
     try {
-        // Fetch Column A (Names)
         const res = await sheets.spreadsheets.values.get({
             spreadsheetId: GOOGLE_SHEET_ID,
             range: `${sheetName}!A:A`,
         });
 
         const rows = res.data.values || [];
-        // Normalize search
         const target = factionName.toLowerCase().trim();
 
-        // Loop through rows (Index 0 is Row 1)
         for (let i = 0; i < rows.length; i++) {
             const cell = rows[i][0];
             if (cell && cell.toLowerCase().trim() === target) {
-                return i + 1; // Return 1-based row index
+                return i + 1; // 1-based row index
             }
         }
         return null;
     } catch (err) {
         console.error(`Error searching ${sheetName}:`, err);
+        return null;
+    }
+}
+
+// --- HELPER: Get Sheet ID by Title (Required for deletion) ---
+async function getSheetId(title) {
+    try {
+        const res = await sheets.spreadsheets.get({ spreadsheetId: GOOGLE_SHEET_ID });
+        const sheet = res.data.sheets.find(s => s.properties.title === title);
+        return sheet ? sheet.properties.sheetId : null;
+    } catch (err) {
+        console.error("Error getting sheet ID:", err);
         return null;
     }
 }
@@ -43,29 +66,63 @@ export default {
         .addSubcommand(sub =>
             sub.setName("view")
                 .setDescription("View faction status.")
-                .addStringOption(o => o.setName("name").setDescription("Faction Name").setRequired(true))
+                .addStringOption(o => 
+                    o.setName("name")
+                     .setDescription("Faction Name")
+                     .setRequired(true)
+                     .setAutocomplete(true)
+                )
         )
         // 3. SET TIER
         .addSubcommand(sub =>
             sub.setName("settier")
                 .setDescription("Update Tier & Date.")
-                .addStringOption(o => o.setName("name").setDescription("Faction Name").setRequired(true))
+                .addStringOption(o => 
+                    o.setName("name")
+                     .setDescription("Faction Name")
+                     .setRequired(true)
+                     .setAutocomplete(true)
+                )
                 .addIntegerOption(o => o.setName("tier").setDescription("New Tier (1-9)").setMinValue(1).setMaxValue(9).setRequired(true))
         )
         // 4. SET LEAD
         .addSubcommand(sub =>
             sub.setName("setlead")
                 .setDescription("Assign a Team Lead.")
-                .addStringOption(o => o.setName("name").setDescription("Faction Name").setRequired(true))
+                .addStringOption(o => 
+                    o.setName("name")
+                     .setDescription("Faction Name")
+                     .setRequired(true)
+                     .setAutocomplete(true)
+                )
                 .addUserOption(o => o.setName("user").setDescription("The Team Lead").setRequired(true))
+        )
+        // 5. REMOVE
+        .addSubcommand(sub =>
+            sub.setName("remove")
+                .setDescription("Remove a faction from the Matrix.")
+                .addStringOption(o => 
+                    o.setName("name")
+                     .setDescription("Faction Name")
+                     .setRequired(true)
+                     .setAutocomplete(true)
+                )
         ),
+
+    async autocomplete(interaction) {
+        const focusedValue = interaction.options.getFocused().toLowerCase();
+        const choices = await getFactionDataNames();
+        const filtered = choices
+            .filter(choice => choice.toLowerCase().includes(focusedValue))
+            .slice(0, 25);
+        await interaction.respond(filtered.map(choice => ({ name: choice, value: choice })));
+    },
 
     async execute(interaction) {
         // --- PERMISSIONS ---
         const requiredRole = "[ECRP] Faction Management";
         const hasRole = interaction.member.roles.cache.some(r => r.name === requiredRole);
         
-        // Allow anyone to "view", but restrict others
         if (interaction.options.getSubcommand() !== "view" && !hasRole) {
             return interaction.reply({ content: `❌ Restricted to **${requiredRole}** only.`, ephemeral: true });
         }
@@ -77,7 +134,6 @@ export default {
         try {
             // --- CREATE ---
             if (sub === "create") {
-                // 1. Check/Add to Sheet1 (Master List)
                 const masterRow = await findFactionRow("Sheet1", factionName);
                 if (!masterRow) {
                     await sheets.spreadsheets.values.append({
@@ -88,14 +144,12 @@ export default {
                     });
                 }
 
-                // 2. Check/Add to FactionData (Matrix)
                 const dataRow = await findFactionRow("FactionData", factionName);
                 if (dataRow) {
                     return interaction.editReply(`❌ **${factionName}** already exists in FactionData.`);
                 }
 
                 const today = new Date().toLocaleDateString("en-GB");
-                // Append: [Name, LeadID, Tier, Date]
                 await sheets.spreadsheets.values.append({
                     spreadsheetId: GOOGLE_SHEET_ID,
                     range: "FactionData!A:D",
@@ -111,15 +165,12 @@ export default {
                 const rowNum = await findFactionRow("FactionData", factionName);
                 if (!rowNum) return interaction.editReply(`❌ Could not find **${factionName}** in FactionData.`);
 
-                // Fetch that specific row (A to D)
                 const res = await sheets.spreadsheets.values.get({
                     spreadsheetId: GOOGLE_SHEET_ID,
                     range: `FactionData!A${rowNum}:D${rowNum}`
                 });
 
                 const row = res.data.values ? res.data.values[0] : [];
-                // row = [Name, LeadID, Tier, Date]
-
                 const leadId = row[1];
                 const leadDisplay = (leadId && leadId !== "None") ? `<@${leadId}>` : "None Assigned";
 
@@ -144,10 +195,6 @@ export default {
                 if (!rowNum) return interaction.editReply(`❌ Could not find **${factionName}** in FactionData.`);
 
                 const today = new Date().toLocaleDateString("en-GB");
-
-                // Update Columns C (Tier) and D (Date) -> Indices 2 and 3? No, Ranges are A1 notation.
-                // Col A=1, B=2, C=3, D=4
-                // We update Range C{row}:D{row}
                 await sheets.spreadsheets.values.update({
                     spreadsheetId: GOOGLE_SHEET_ID,
                     range: `FactionData!C${rowNum}:D${rowNum}`,
@@ -164,7 +211,6 @@ export default {
                 const rowNum = await findFactionRow("FactionData", factionName);
                 if (!rowNum) return interaction.editReply(`❌ Could not find **${factionName}** in FactionData.`);
 
-                // Update Column B (Lead ID) -> Range B{row}
                 await sheets.spreadsheets.values.update({
                     spreadsheetId: GOOGLE_SHEET_ID,
                     range: `FactionData!B${rowNum}`,
@@ -173,6 +219,35 @@ export default {
                 });
 
                 return interaction.editReply(`✅ **${factionName}** is now led by ${user}.`);
+            }
+
+            // --- REMOVE ---
+            if (sub === "remove") {
+                const rowNum = await findFactionRow("FactionData", factionName);
+                if (!rowNum) return interaction.editReply(`❌ Could not find **${factionName}** in FactionData.`);
+
+                const sheetId = await getSheetId("FactionData");
+                if (sheetId === null) return interaction.editReply("❌ System Error: Could not find FactionData tab ID.");
+
+                // To delete a row, we must use batchUpdate with deleteDimension
+                // The API uses 0-based indexes. rowNum is 1-based.
+                await sheets.spreadsheets.batchUpdate({
+                    spreadsheetId: GOOGLE_SHEET_ID,
+                    requestBody: {
+                        requests: [{
+                            deleteDimension: {
+                                range: {
+                                    sheetId: sheetId,
+                                    dimension: "ROWS",
+                                    startIndex: rowNum - 1,
+                                    endIndex: rowNum
+                                }
+                            }
+                        }]
+                    }
+                });
+
+                return interaction.editReply(`🗑️ **${factionName}** has been removed from the Matrix.`);
             }
 
         } catch (err) {
