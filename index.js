@@ -5,7 +5,7 @@ import {
     Routes,
     SlashCommandBuilder,
     EmbedBuilder,
-    MessageFlags 
+    MessageFlags
 } from "discord.js";
 import { google } from "googleapis";
 import { DateTime } from "luxon";
@@ -18,11 +18,9 @@ const DISCORD_TOKEN = process.env.DISCORD_TOKEN;
 const CLIENT_ID = process.env.CLIENT_ID;
 const GUILD_ID = process.env.GUILD_ID;
 const GOOGLE_CLIENT_EMAIL = process.env.GOOGLE_CLIENT_EMAIL;
-// Handle Railway's newline formatting in private keys
 const GOOGLE_PRIVATE_KEY = process.env.GOOGLE_PRIVATE_KEY?.replace(/\\n/g, "\n");
 const GOOGLE_SHEET_ID = process.env.GOOGLE_SHEET_ID;
 
-// Role IDs & Constants
 const FACTION_MANAGEMENT_ROLE_ID = "1457229857749729363";
 const FM_MANAGEMENT_ROLE_NAME = "[ECRP] FM Management";
 const TEAM_LEAD_ROLE_NAME = "Team Lead";
@@ -48,7 +46,7 @@ const sheets = google.sheets({ version: "v4", auth });
 const client = new Client({
     intents: [
         GatewayIntentBits.Guilds,
-        GatewayIntentBits.GuildMembers, // REQUIRED for pings to work
+        GatewayIntentBits.GuildMembers, 
         GatewayIntentBits.GuildMessages
     ]
 });
@@ -58,14 +56,21 @@ const client = new Client({
 // ───────────────────────────────────────────────
 
 /**
- * Resolves a target (User or Role) into a mentionable string.
- * FIX: Checks if input already starts with '@' to prevent double symbols.
+ * Resolves a target string into a mention.
+ * FIX: Detects if the string is ALREADY a ping (<@...>) and returns it as-is.
  */
 async function resolvePing(guild, type, value) {
     if (!value) return "@Unknown";
-    
-    // 1. Clean the input for searching (remove @ temporarily)
-    const cleanValue = value.replace(/^@/, '').trim().toLowerCase();
+    const raw = value.trim();
+
+    // 1. If it looks like <@12345...> or <@&12345...>, IT IS ALREADY A PING.
+    // Return immediately. Do not add @.
+    if (raw.startsWith('<') && raw.endsWith('>')) {
+        return raw;
+    }
+
+    // 2. Clean the input for searching (remove @ temporarily)
+    const cleanValue = raw.replace(/^@+/, '').toLowerCase();
     
     try {
         if (type === "role") {
@@ -81,27 +86,17 @@ async function resolvePing(guild, type, value) {
         console.error("Ping Resolution Error:", e.message);
     }
 
-    // 2. Fallback: If not found, use user input. 
-    return value.startsWith('@') ? value : `@${value}`;
+    // 3. Fallback: If search failed, just assume user wants text.
+    // Ensure we don't double add @ if they typed it.
+    return raw.startsWith('@') ? raw : `@${raw}`;
 }
 
-/**
- * Parses user input into a standardized ISO-like format for storage.
- * FIX: Adds padding to time inputs (3:30 -> 03:30)
- */
 function convertToUTC(date, time, timezone) {
-    // Pad time just in case user inputs "3:30" instead of "03:30"
     const paddedTime = time.includes(":") && time.length < 5 ? time.padStart(5, "0") : time;
-    
-    // Attempt strict parsing first
     const dt = DateTime.fromFormat(`${date} ${paddedTime}`, "yyyy-MM-dd HH:mm", { zone: timezone });
     if (!dt.isValid) return null;
-    
     const utcDt = dt.toUTC();
-    return {
-        utcDate: utcDt.toFormat("yyyy-MM-dd"),
-        utcTime: utcDt.toFormat("HH:mm")
-    };
+    return { utcDate: utcDt.toFormat("yyyy-MM-dd"), utcTime: utcDt.toFormat("HH:mm") };
 }
 
 async function ensureSheetTab(tabName, headers = []) {
@@ -123,7 +118,7 @@ async function ensureSheetTab(tabName, headers = []) {
 }
 
 // ───────────────────────────────────────────────
-// 5. SLASH COMMAND DEFINITIONS
+// 5. SLASH COMMANDS
 // ───────────────────────────────────────────────
 const commands = [
     new SlashCommandBuilder().setName("factioninfo").setDescription("Lookup intelligence data for a faction").addStringOption(o => o.setName("faction").setDescription("Faction name").setRequired(true).setAutocomplete(true)),
@@ -162,7 +157,6 @@ client.once("ready", async () => {
         await rest.put(Routes.applicationGuildCommands(CLIENT_ID, GUILD_ID), { body: commands });
         console.log(`[SYSTEM] Meridian Bot Online (${client.user.tag})`);
         
-        // Start Cron Job
         cron.schedule("* * * * *", () => {
             console.log(`[CRON] Tick.`);
             checkReminders();
@@ -181,7 +175,7 @@ client.on("interactionCreate", async interaction => {
     const isMgt = interaction.member.roles.cache.some(r => r.name === FM_MANAGEMENT_ROLE_NAME);
     const isTL = interaction.member.roles.cache.some(r => r.name === TEAM_LEAD_ROLE_NAME);
 
-    // Permissions
+    // Permission Gates
     const fmCmds = ["factioninfo", "scenecount", "help", "logscene", "addnote", "getnotes", "setreminder", "listreminders"];
     if (fmCmds.includes(interaction.commandName) && !isFM) return interaction.reply({ content: "❌ Unauthorized: FM Role Required.", flags: MessageFlags.Ephemeral });
     if (interaction.commandName === "adddossier" && !isTL) return interaction.reply({ content: "❌ Unauthorized: Team Lead Role Required.", flags: MessageFlags.Ephemeral });
@@ -254,10 +248,10 @@ async function checkReminders() {
                 const r = rows[i];
                 let status = r[12]?.trim().toLowerCase();
                 
-                // SKIPS COMPLETED ROWS INSTANTLY
+                // SKIPS COMPLETED ROWS
                 if (!r || !status || status === "completed") continue;
 
-                // --- Auto-Fix Time Formatting ---
+                // Time Fix & Parse
                 let dateStr = r[5]?.trim();
                 let timeStr = r[4]?.trim();
                 if (timeStr && timeStr.indexOf(":") > -1 && timeStr.length < 5) timeStr = timeStr.padStart(5, "0");
@@ -285,7 +279,7 @@ async function checkReminders() {
                         allowedMentions: { parse: ['users', 'roles'] }
                     });
 
-                    // Update Status to 'warned'
+                    // Update Status
                     await sheets.spreadsheets.values.update({
                         spreadsheetId: GOOGLE_SHEET_ID, range: `Reminders!M${i + 2}`,
                         valueInputOption: "USER_ENTERED", requestBody: { values: [["warned"]] }
@@ -307,12 +301,10 @@ async function checkReminders() {
                         allowedMentions: { parse: ['users', 'roles'] }
                     });
 
-                    // ─── SPAM FIX: MARK COMPLETED (Instead of deleting) ───
+                    // ─── MARK COMPLETED ───
                     const recurrence = r[6]?.toLowerCase();
                     
                     if (recurrence === "none" || !recurrence) {
-                        console.log(`[COMPLETED] Row ${i+2}`);
-                        // Update Column M to "completed" -> Stops the loop from picking it up again
                         await sheets.spreadsheets.values.update({
                             spreadsheetId: GOOGLE_SHEET_ID, range: `Reminders!M${i + 2}`,
                             valueInputOption: "USER_ENTERED", 
