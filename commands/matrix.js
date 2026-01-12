@@ -1,6 +1,15 @@
 import { SlashCommandBuilder, EmbedBuilder } from "discord.js";
 import { sheets, GOOGLE_SHEET_ID } from "../utils/googleClient.js";
 
+// --- HELPER: Get Date as DD/MON/YYYY ---
+function getTodayDate() {
+    const date = new Date();
+    const day = String(date.getDate()).padStart(2, '0');
+    const month = date.toLocaleString('en-GB', { month: 'short' }).toUpperCase();
+    const year = date.getFullYear();
+    return `${day}/${month}/${year}`;
+}
+
 // --- HELPER: Get List of Factions from FactionData ---
 async function getFactionDataNames() {
     try {
@@ -149,7 +158,7 @@ export default {
                     return interaction.editReply(`❌ **${factionName}** already exists in FactionData.`);
                 }
 
-                const today = new Date().toLocaleDateString("en-GB");
+                const today = getTodayDate();
                 await sheets.spreadsheets.values.append({
                     spreadsheetId: GOOGLE_SHEET_ID,
                     range: "FactionData!A:D",
@@ -194,7 +203,7 @@ export default {
                 const rowNum = await findFactionRow("FactionData", factionName);
                 if (!rowNum) return interaction.editReply(`❌ Could not find **${factionName}** in FactionData.`);
 
-                const today = new Date().toLocaleDateString("en-GB");
+                const today = getTodayDate();
                 await sheets.spreadsheets.values.update({
                     spreadsheetId: GOOGLE_SHEET_ID,
                     range: `FactionData!C${rowNum}:D${rowNum}`,
@@ -229,8 +238,6 @@ export default {
                 const sheetId = await getSheetId("FactionData");
                 if (sheetId === null) return interaction.editReply("❌ System Error: Could not find FactionData tab ID.");
 
-                // To delete a row, we must use batchUpdate with deleteDimension
-                // The API uses 0-based indexes. rowNum is 1-based.
                 await sheets.spreadsheets.batchUpdate({
                     spreadsheetId: GOOGLE_SHEET_ID,
                     requestBody: {
