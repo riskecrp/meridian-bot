@@ -259,6 +259,20 @@ const setReminderCmd = new SlashCommandBuilder()
             .setRequired(true)
     )
     .addStringOption(o =>
+        o.setName("target_type")
+            .setDescription("Who should receive the reminder ping")
+            .setRequired(true)
+            .addChoices(
+                { name: "User", value: "user" },
+                { name: "Role", value: "role" }
+            )
+    )
+    .addStringOption(o =>
+        o.setName("target_value")
+            .setDescription("Username (for user) or Role name (for role)")
+            .setRequired(true)
+    )
+    .addStringOption(o =>
         o.setName("recurrence")
             .setDescription("Recurrence pattern")
             .setRequired(false)
@@ -1446,6 +1460,8 @@ client.on("interactionCreate", async interaction => {
         const text = interaction.options.getString("text");
         const time = interaction.options.getString("time");
         const date = interaction.options.getString("date");
+        const targetType = interaction.options.getString("target_type");
+        const targetValue = interaction.options.getString("target_value");
         const recurrence = interaction.options.getString("recurrence") || "none";
         const timezone = interaction.options.getString("timezone") || "UTC";
         const visibility = interaction.options.getString("visibility") || "private";
@@ -1472,24 +1488,24 @@ client.on("interactionCreate", async interaction => {
                 return interaction.editReply({ content: "❌ Invalid date. Please provide a valid date." });
             }
 
-            // Ensure the tab exists
+            // Ensure the tab exists with updated headers including target fields
             await ensureSheetTab("Reminders", [
-                "Reminder Text", "Time", "Date", "Recurrence", "Creator", "Creator Role", "Timezone", "Visibility"
+                "Reminder Text", "Time", "Date", "Recurrence", "Creator", "Creator Role", "Timezone", "Visibility", "Target Type", "Target Value"
             ]);
 
-            // Add the reminder
+            // Add the reminder with target information
             const nextRow = await findNextRowInTab("Reminders", "A");
             await sheets.spreadsheets.values.update({
                 spreadsheetId: GOOGLE_SHEET_ID,
-                range: `Reminders!A${nextRow}:H${nextRow}`,
+                range: `Reminders!A${nextRow}:J${nextRow}`,
                 valueInputOption: "USER_ENTERED",
                 requestBody: {
-                    values: [[text, time, date, recurrence, creator, creatorRole, timezone, visibility]]
+                    values: [[text, time, date, recurrence, creator, creatorRole, timezone, visibility, targetType, targetValue]]
                 }
             });
 
             return interaction.editReply({ 
-                content: `✅ Reminder set for ${date} at ${time} (${timezone}).\nVisibility: ${visibility}` 
+                content: `✅ Reminder set for ${date} at ${time} (${timezone}).\nTarget: ${targetType} - ${targetValue}\nVisibility: ${visibility}\n\n⏰ Pings will be sent 30 minutes before and at the event time.` 
             });
 
         } catch (err) {
@@ -1508,6 +1524,10 @@ client.on("interactionCreate", async interaction => {
     if (interaction.commandName === "listreminders") {
         const username = interaction.user.username;
         const userRole = getUserHighestRole(interaction, ["Management", "Team Leader", "Team Guide"]);
+        
+        // Get all user's roles
+        const memberRoles = interaction.member?.roles?.cache;
+        const userRoleNames = memberRoles ? Array.from(memberRoles.values()).map(r => r.name) : [];
 
         try {
             // Check if tab exists
@@ -1530,15 +1550,15 @@ client.on("interactionCreate", async interaction => {
                 return interaction.reply({ embeds: [embedEmpty], ephemeral: true });
             }
 
-            // Get reminders
+            // Get reminders - now includes target columns (I and J)
             const res = await sheets.spreadsheets.values.get({
                 spreadsheetId: GOOGLE_SHEET_ID,
-                range: "Reminders!A:H"
+                range: "Reminders!A:J"
             });
 
             const rows = res.data.values || [];
             
-            // Filter reminders based on visibility rules
+            // Filter reminders based on visibility rules AND target
             let reminders = [];
             for (let i = 1; i < rows.length; i++) {
                 const row = rows[i];
@@ -1550,15 +1570,26 @@ client.on("interactionCreate", async interaction => {
                 const creatorRole = row[5] || "Unknown";
                 const timezone = row[6] || "UTC";
                 const visibility = row[7] || "private";
+                const targetType = row[8] || "user"; // Default to user for backwards compatibility
+                const targetValue = row[9] || "";
 
-                // Visibility rules
+                // Check if user matches target
+                let isTargeted = false;
+                if (targetType === "user" && targetValue.toLowerCase() === username.toLowerCase()) {
+                    isTargeted = true;
+                } else if (targetType === "role" && userRoleNames.some(r => r.toLowerCase() === targetValue.toLowerCase())) {
+                    isTargeted = true;
+                }
+
+                // Visibility rules (original logic)
                 const isCreator = creator === username;
                 const isSameRole = userRole && creatorRole === userRole;
                 const isPublic = visibility === "public";
                 const isRoleVisible = visibility === "role" && isSameRole;
                 const isPrivateVisible = visibility === "private" && isCreator;
 
-                if (isPublic || isRoleVisible || isPrivateVisible) {
+                // Show reminder if user is targeted OR visibility rules allow
+                if (isTargeted || isPublic || isRoleVisible || isPrivateVisible) {
                     reminders.push({
                         text: reminderText,
                         time,
@@ -1566,7 +1597,9 @@ client.on("interactionCreate", async interaction => {
                         recurrence,
                         creator,
                         timezone,
-                        visibility
+                        visibility,
+                        targetType,
+                        targetValue
                     });
                 }
             }
@@ -1584,10 +1617,11 @@ client.on("interactionCreate", async interaction => {
                 return interaction.reply({ embeds: [embedEmpty], ephemeral: true });
             }
 
-            // Build reminder lines
+            // Build reminder lines with target information
             const lines = reminders.map(r => {
                 const recurrenceText = r.recurrence !== "none" ? ` (${r.recurrence})` : "";
-                return `**${r.date}** at ${r.time} ${r.timezone}${recurrenceText}\n${r.text}\n_Created by: ${r.creator} | Visibility: ${r.visibility}_`;
+                const targetInfo = r.targetType && r.targetValue ? `\n🎯 Target: ${r.targetType} - ${r.targetValue}` : "";
+                return `**${r.date}** at ${r.time} ${r.timezone}${recurrenceText}\n${r.text}${targetInfo}\n_Created by: ${r.creator} | Visibility: ${r.visibility}_`;
             });
 
             // Chunk into fields
@@ -1684,11 +1718,14 @@ client.on("interactionCreate", async interaction => {
                     value: 
                         `**\`/setreminder\`** - Create a reminder\n` +
                         `• Roles: Team Leader, Management, Team Guide\n` +
-                        `• Example: \`/setreminder text:Meeting time:14:00 date:2024-01-20\`\n` +
+                        `• Example: \`/setreminder text:Meeting time:14:00 date:2024-01-20 target_type:user target_value:JohnDoe\`\n` +
+                        `• Select target (user or role) to specify who receives pings\n` +
+                        `• Pings sent 30 minutes before and at event time\n` +
                         `• Supports one-time or recurring (daily/weekly/monthly)\n⠀\n` +
                         `**\`/listreminders\`** - View your reminders\n` +
                         `• Roles: Everyone\n` +
-                        `• Shows reminders based on visibility (private/role/public)\n⠀`
+                        `• Shows reminders targeting you or your roles\n` +
+                        `• Also shows reminders based on visibility (private/role/public)\n⠀`
                 },
                 {
                     name: "ℹ️ **Help**",
