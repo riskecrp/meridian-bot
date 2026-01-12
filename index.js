@@ -177,34 +177,6 @@ const confiscatePropertyCmd = new SlashCommandBuilder()
 // NEW COMMANDS: One-Off Scenes
 // ───────────────────────────────────────────────
 
-const addSceneCmd = new SlashCommandBuilder()
-    .setName("addscene")
-    .setDescription("Add a new one-off scene to the database.")
-    .addStringOption(o =>
-        o.setName("scene_name")
-            .setDescription("Name of the scene")
-            .setRequired(true)
-    )
-    .addStringOption(o =>
-        o.setName("meridian_or_ped")
-            .setDescription("Meridian or Ped")
-            .setRequired(true)
-            .addChoices(
-                { name: "Meridian", value: "Meridian" },
-                { name: "Ped", value: "Ped" }
-            )
-    )
-    .addStringOption(o =>
-        o.setName("scene_info")
-            .setDescription("Scene information/description")
-            .setRequired(true)
-    )
-    .addStringOption(o =>
-        o.setName("rewards")
-            .setDescription("Rewards for the scene")
-            .setRequired(true)
-    );
-
 const logSceneCmd = new SlashCommandBuilder()
     .setName("logscene")
     .setDescription("Log execution of a scene with updated metadata.")
@@ -229,10 +201,6 @@ const sceneCountCmd = new SlashCommandBuilder()
             .setRequired(true)
             .setAutocomplete(true)
     );
-
-const listScenesCmd = new SlashCommandBuilder()
-    .setName("listscenes")
-    .setDescription("List all available one-off scenes with run counts and participating factions.");
 
 // ───────────────────────────────────────────────
 // NEW COMMANDS: Notable Interactions
@@ -291,6 +259,20 @@ const setReminderCmd = new SlashCommandBuilder()
             .setRequired(true)
     )
     .addStringOption(o =>
+        o.setName("target_type")
+            .setDescription("Who should receive the reminder ping")
+            .setRequired(true)
+            .addChoices(
+                { name: "User", value: "user" },
+                { name: "Role", value: "role" }
+            )
+    )
+    .addStringOption(o =>
+        o.setName("target_value")
+            .setDescription("Username (for user) or Role name (for role)")
+            .setRequired(true)
+    )
+    .addStringOption(o =>
         o.setName("recurrence")
             .setDescription("Recurrence pattern")
             .setRequired(false)
@@ -346,10 +328,8 @@ async function deployCommands() {
                     listPropertiesCmd.toJSON(), 
                     addDossierCmd.toJSON(), 
                     confiscatePropertyCmd.toJSON(),
-                    addSceneCmd.toJSON(),
                     logSceneCmd.toJSON(),
                     sceneCountCmd.toJSON(),
-                    listScenesCmd.toJSON(),
                     addNoteCmd.toJSON(),
                     getNotesCmd.toJSON(),
                     setReminderCmd.toJSON(),
@@ -1086,68 +1066,6 @@ client.on("interactionCreate", async interaction => {
     // ────────────────────────────────────────────────────────────
 
     // ────────────────
-    // /addscene (Team Leader OR Management)
-    // ────────────────
-    if (interaction.commandName === "addscene") {
-        if (!hasRequiredRole(interaction, ["Team Leader", "Management"])) {
-            return interaction.reply({ 
-                content: "You do not have permission to run this command. (Requires Team Leader or Management role)", 
-                ephemeral: true 
-            });
-        }
-
-        const sceneName = interaction.options.getString("scene_name");
-        const meridianOrPed = interaction.options.getString("meridian_or_ped");
-        const sceneInfo = interaction.options.getString("scene_info");
-        const rewards = interaction.options.getString("rewards");
-
-        try {
-            await interaction.deferReply({ ephemeral: true });
-
-            // Ensure the tab exists with updated headers
-            await ensureSheetTab("One Off Scenes", [
-                "Scene Name", "Meridian or Ped", "Scene Info", "Rewards", "Times Run", "Participants", "Last Run Date"
-            ]);
-
-            // Check for duplicates
-            const res = await sheets.spreadsheets.values.get({
-                spreadsheetId: GOOGLE_SHEET_ID,
-                range: "One Off Scenes!A:A"
-            });
-
-            const existingScenes = (res.data.values || []).slice(1).map(row => row[0]?.toLowerCase().trim());
-            
-            if (existingScenes.includes(sceneName.toLowerCase().trim())) {
-                return interaction.editReply({ content: `❌ Scene "${sceneName}" already exists.` });
-            }
-
-            // Add the scene with new fields
-            const nextRow = await findNextRowInTab("One Off Scenes", "A");
-            await sheets.spreadsheets.values.update({
-                spreadsheetId: GOOGLE_SHEET_ID,
-                range: `One Off Scenes!A${nextRow}:G${nextRow}`,
-                valueInputOption: "USER_ENTERED",
-                requestBody: {
-                    values: [[sceneName, meridianOrPed, sceneInfo, rewards, 0, "", ""]]
-                }
-            });
-
-            // Refresh scene cache
-            await loadScenes();
-
-            return interaction.editReply({ content: `✅ Scene "${sceneName}" added successfully.` });
-
-        } catch (err) {
-            console.error("ADDSCENE ERROR:", err);
-            try {
-                return interaction.editReply({ content: "There was an error updating the Google Sheet." });
-            } catch (e) {
-                return interaction.followUp({ content: "There was an error updating the Google Sheet.", ephemeral: true });
-            }
-        }
-    }
-
-    // ────────────────
     // /logscene (Team Leader, Management, OR Team Guide)
     // ────────────────
     if (interaction.commandName === "logscene") {
@@ -1186,7 +1104,7 @@ client.on("interactionCreate", async interaction => {
             }
 
             if (sceneRow === -1) {
-                return interaction.editReply({ content: `❌ Scene "${sceneName}" not found. Use /addscene to create it first.` });
+                return interaction.editReply({ content: `❌ Scene "${sceneName}" not found in the database. Please contact a Team Leader or Management member to add new scenes.` });
             }
 
             const currentData = rows[sceneRow - 1];
@@ -1352,138 +1270,6 @@ client.on("interactionCreate", async interaction => {
 
         } catch (err) {
             console.error("SCENECOUNT ERROR:", err);
-            return interaction.reply({ 
-                content: "There was an error accessing the Google Sheet.", 
-                ephemeral: true 
-            });
-        }
-    }
-
-    // ────────────────
-    // /listscenes (Public access)
-    // ────────────────
-    if (interaction.commandName === "listscenes") {
-        try {
-            // Check if tab exists
-            const sheetInfo = await sheets.spreadsheets.get({
-                spreadsheetId: GOOGLE_SHEET_ID
-            });
-            
-            const tabExists = sheetInfo.data.sheets.some(s => s.properties.title === "One Off Scenes");
-            
-            if (!tabExists) {
-                const embedEmpty = new EmbedBuilder()
-                    .setColor(0x2b6cb0)
-                    .setTitle(
-                        `━━━━━━━━━━━━━━━━━━━━━━━━━━\n` +
-                        `🎭  **ALL ONE-OFF SCENES**\n` +
-                        `━━━━━━━━━━━━━━━━━━━━━━━━━━`
-                    )
-                    .addFields({ name: "⠀", value: "_No scenes found._" });
-
-                return interaction.reply({ embeds: [embedEmpty] });
-            }
-
-            // Get all scene data
-            const res = await sheets.spreadsheets.values.get({
-                spreadsheetId: GOOGLE_SHEET_ID,
-                range: "One Off Scenes!A:G"
-            });
-
-            const rows = res.data.values || [];
-            
-            if (rows.length <= 1) {
-                const embedEmpty = new EmbedBuilder()
-                    .setColor(0x2b6cb0)
-                    .setTitle(
-                        `━━━━━━━━━━━━━━━━━━━━━━━━━━\n` +
-                        `🎭  **ALL ONE-OFF SCENES**\n` +
-                        `━━━━━━━━━━━━━━━━━━━━━━━━━━`
-                    )
-                    .addFields({ name: "⠀", value: "_No scenes available._" });
-
-                return interaction.reply({ embeds: [embedEmpty] });
-            }
-
-            // Process all scenes
-            const sceneList = [];
-            const MAX_FIELD_LENGTH = 200; // Discord embed field safe length
-            const TRUNCATE_LENGTH = 197; // Leave room for "..."
-            
-            for (let i = 1; i < rows.length; i++) {
-                const row = rows[i];
-                if (!row || row.length === 0) continue; // Skip empty rows
-                
-                const sceneName = row[0] || "Unknown Scene";
-                const meridianOrPed = row[1] || "N/A";
-                
-                // Truncate long text fields to prevent Discord embed limits
-                const rawSceneInfo = row[2] || "N/A";
-                const sceneInfo = rawSceneInfo.length > MAX_FIELD_LENGTH 
-                    ? rawSceneInfo.substring(0, TRUNCATE_LENGTH) + "..." 
-                    : rawSceneInfo;
-                
-                const rawRewards = row[3] || "N/A";
-                const rewards = rawRewards.length > MAX_FIELD_LENGTH 
-                    ? rawRewards.substring(0, TRUNCATE_LENGTH) + "..." 
-                    : rawRewards;
-                
-                const timesRun = parseInt(row[4] || "0", 10);
-                const participants = row[5] || "";
-                
-                // Get unique factions from participants
-                const participantList = participants.split(',').map(p => p.trim()).filter(p => p);
-                const uniqueFactions = [...new Set(participantList)];
-                const factionsList = uniqueFactions.length > 0 
-                    ? uniqueFactions.join(", ") 
-                    : "_No runs yet_";
-                
-                sceneList.push({
-                    name: sceneName,
-                    type: meridianOrPed,
-                    info: sceneInfo,
-                    rewards: rewards,
-                    timesRun: timesRun,
-                    factions: factionsList
-                });
-            }
-
-            // Sort by times run (descending) then by name
-            sceneList.sort((a, b) => {
-                if (b.timesRun !== a.timesRun) {
-                    return b.timesRun - a.timesRun;
-                }
-                return a.name.localeCompare(b.name);
-            });
-
-            // Build scene display lines with all information
-            const lines = sceneList.map(scene => 
-                `**${scene.name}** (${scene.type})\n` +
-                `• Scene Info: ${scene.info}\n` +
-                `• Rewards: ${scene.rewards}\n` +
-                `• Times Run: ${scene.timesRun}\n` +
-                `• Factions: ${scene.factions}\n⠀`
-            );
-
-            // Chunk into fields
-            const fieldValues = chunkLinesToFieldValues(lines, 1024);
-            const fields = fieldValues.map(v => ({ name: "⠀", value: v }));
-
-            const embed = new EmbedBuilder()
-                .setColor(0x2b6cb0)
-                .setTitle(
-                    `━━━━━━━━━━━━━━━━━━━━━━━━━━\n` +
-                    `🎭  **ALL ONE-OFF SCENES**\n` +
-                    `**Total: ${sceneList.length} scene(s)**\n` +
-                    `━━━━━━━━━━━━━━━━━━━━━━━━━━`
-                )
-                .addFields(fields)
-                .setFooter({ text: "Sorted by times run" });
-
-            return interaction.reply({ embeds: [embed] });
-
-        } catch (err) {
-            console.error("LISTSCENES ERROR:", err);
             return interaction.reply({ 
                 content: "There was an error accessing the Google Sheet.", 
                 ephemeral: true 
@@ -1674,6 +1460,8 @@ client.on("interactionCreate", async interaction => {
         const text = interaction.options.getString("text");
         const time = interaction.options.getString("time");
         const date = interaction.options.getString("date");
+        const targetType = interaction.options.getString("target_type");
+        const targetValue = interaction.options.getString("target_value");
         const recurrence = interaction.options.getString("recurrence") || "none";
         const timezone = interaction.options.getString("timezone") || "UTC";
         const visibility = interaction.options.getString("visibility") || "private";
@@ -1700,24 +1488,24 @@ client.on("interactionCreate", async interaction => {
                 return interaction.editReply({ content: "❌ Invalid date. Please provide a valid date." });
             }
 
-            // Ensure the tab exists
+            // Ensure the tab exists with updated headers including target fields
             await ensureSheetTab("Reminders", [
-                "Reminder Text", "Time", "Date", "Recurrence", "Creator", "Creator Role", "Timezone", "Visibility"
+                "Reminder Text", "Time", "Date", "Recurrence", "Creator", "Creator Role", "Timezone", "Visibility", "Target Type", "Target Value"
             ]);
 
-            // Add the reminder
+            // Add the reminder with target information
             const nextRow = await findNextRowInTab("Reminders", "A");
             await sheets.spreadsheets.values.update({
                 spreadsheetId: GOOGLE_SHEET_ID,
-                range: `Reminders!A${nextRow}:H${nextRow}`,
+                range: `Reminders!A${nextRow}:J${nextRow}`,
                 valueInputOption: "USER_ENTERED",
                 requestBody: {
-                    values: [[text, time, date, recurrence, creator, creatorRole, timezone, visibility]]
+                    values: [[text, time, date, recurrence, creator, creatorRole, timezone, visibility, targetType, targetValue]]
                 }
             });
 
             return interaction.editReply({ 
-                content: `✅ Reminder set for ${date} at ${time} (${timezone}).\nVisibility: ${visibility}` 
+                content: `✅ Reminder set for ${date} at ${time} (${timezone}).\nTarget: ${targetType} - ${targetValue}\nVisibility: ${visibility}\n\n⏰ Pings will be sent 30 minutes before and at the event time.` 
             });
 
         } catch (err) {
@@ -1736,6 +1524,10 @@ client.on("interactionCreate", async interaction => {
     if (interaction.commandName === "listreminders") {
         const username = interaction.user.username;
         const userRole = getUserHighestRole(interaction, ["Management", "Team Leader", "Team Guide"]);
+        
+        // Get all user's roles
+        const memberRoles = interaction.member?.roles?.cache;
+        const userRoleNames = memberRoles ? Array.from(memberRoles.values()).map(r => r.name) : [];
 
         try {
             // Check if tab exists
@@ -1758,15 +1550,15 @@ client.on("interactionCreate", async interaction => {
                 return interaction.reply({ embeds: [embedEmpty], ephemeral: true });
             }
 
-            // Get reminders
+            // Get reminders - now includes target columns (I and J)
             const res = await sheets.spreadsheets.values.get({
                 spreadsheetId: GOOGLE_SHEET_ID,
-                range: "Reminders!A:H"
+                range: "Reminders!A:J"
             });
 
             const rows = res.data.values || [];
             
-            // Filter reminders based on visibility rules
+            // Filter reminders based on visibility rules AND target
             let reminders = [];
             for (let i = 1; i < rows.length; i++) {
                 const row = rows[i];
@@ -1778,15 +1570,22 @@ client.on("interactionCreate", async interaction => {
                 const creatorRole = row[5] || "Unknown";
                 const timezone = row[6] || "UTC";
                 const visibility = row[7] || "private";
+                const targetType = row[8] || "user"; // Default to user for backwards compatibility
+                const targetValue = row[9] || "";
 
-                // Visibility rules
+                // Check if user matches target
+                const isTargeted = (targetType === "user" && targetValue.toLowerCase() === username.toLowerCase()) ||
+                                   (targetType === "role" && userRoleNames.some(r => r.toLowerCase() === targetValue.toLowerCase()));
+
+                // Visibility rules (original logic)
                 const isCreator = creator === username;
                 const isSameRole = userRole && creatorRole === userRole;
                 const isPublic = visibility === "public";
                 const isRoleVisible = visibility === "role" && isSameRole;
                 const isPrivateVisible = visibility === "private" && isCreator;
 
-                if (isPublic || isRoleVisible || isPrivateVisible) {
+                // Show reminder if user is targeted OR visibility rules allow
+                if (isTargeted || isPublic || isRoleVisible || isPrivateVisible) {
                     reminders.push({
                         text: reminderText,
                         time,
@@ -1794,7 +1593,9 @@ client.on("interactionCreate", async interaction => {
                         recurrence,
                         creator,
                         timezone,
-                        visibility
+                        visibility,
+                        targetType,
+                        targetValue
                     });
                 }
             }
@@ -1812,10 +1613,11 @@ client.on("interactionCreate", async interaction => {
                 return interaction.reply({ embeds: [embedEmpty], ephemeral: true });
             }
 
-            // Build reminder lines
+            // Build reminder lines with target information
             const lines = reminders.map(r => {
                 const recurrenceText = r.recurrence !== "none" ? ` (${r.recurrence})` : "";
-                return `**${r.date}** at ${r.time} ${r.timezone}${recurrenceText}\n${r.text}\n_Created by: ${r.creator} | Visibility: ${r.visibility}_`;
+                const targetInfo = r.targetType && r.targetValue ? `\n🎯 Target: ${r.targetType} - ${r.targetValue}` : "";
+                return `**${r.date}** at ${r.time} ${r.timezone}${recurrenceText}\n${r.text}${targetInfo}\n_Created by: ${r.creator} | Visibility: ${r.visibility}_`;
             });
 
             // Chunk into fields
@@ -1888,19 +1690,13 @@ client.on("interactionCreate", async interaction => {
                 {
                     name: "🎭 **One-Off Scenes**",
                     value: 
-                        `**\`/addscene\`** - Create a new scene\n` +
-                        `• Roles: Team Leader, Management\n` +
-                        `• Example: \`/addscene scene_name:Bank Heist meridian_or_ped:Meridian\`\n⠀\n` +
                         `**\`/logscene\`** - Log a scene execution\n` +
                         `• Roles: Team Leader, Management, Team Guide\n` +
                         `• Example: \`/logscene scene_name:Bank Heist participants:LSPD, EMS\`\n⠀\n` +
                         `**\`/scenecount\`** - View faction's scene history\n` +
                         `• Roles: Everyone\n` +
                         `• Example: \`/scenecount faction:LSPD\`\n` +
-                        `• Shows all scenes from last 90 days with run counts\n⠀\n` +
-                        `**\`/listscenes\`** - List all available scenes\n` +
-                        `• Roles: Everyone\n` +
-                        `• Shows all scenes with run counts and participating factions\n⠀`
+                        `• Shows all scenes from last 90 days with run counts\n⠀`
                 },
                 {
                     name: "💬 **Notable Interactions**",
@@ -1918,11 +1714,14 @@ client.on("interactionCreate", async interaction => {
                     value: 
                         `**\`/setreminder\`** - Create a reminder\n` +
                         `• Roles: Team Leader, Management, Team Guide\n` +
-                        `• Example: \`/setreminder text:Meeting time:14:00 date:2024-01-20\`\n` +
+                        `• Example: \`/setreminder text:Meeting time:14:00 date:2024-01-20 target_type:user target_value:JohnDoe\`\n` +
+                        `• Select target (user or role) to specify who receives pings\n` +
+                        `• Pings sent 30 minutes before and at event time\n` +
                         `• Supports one-time or recurring (daily/weekly/monthly)\n⠀\n` +
                         `**\`/listreminders\`** - View your reminders\n` +
                         `• Roles: Everyone\n` +
-                        `• Shows reminders based on visibility (private/role/public)\n⠀`
+                        `• Shows reminders targeting you or your roles\n` +
+                        `• Also shows reminders based on visibility (private/role/public)\n⠀`
                 },
                 {
                     name: "ℹ️ **Help**",
