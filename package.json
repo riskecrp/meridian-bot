@@ -1,16 +1,20 @@
 {
   "name": "meridian-bot",
   "version": "1.0.0",
-  "main": "index.js",
   "type": "module",
-  "dependencies": {
-    "discord.js": "^14.x.x",
-    "googleapis": "^105.0.0",
-    "luxon": "^3.x.x",
-    "node-cron": "^3.0.x"
-  },
+  "description": "Meridian Database Bot",
+  "main": "index.js",
   "scripts": {
     "start": "node index.js"
+  },
+  "dependencies": {
+    "discord.js": "^14.16.3",
+    "googleapis": "^144.0.0",
+    "dotenv": "^16.4.5"
+        "luxon": "^3.x.x",
+    "node-cron": "^3.0.x"
+  },
+  "engines": {
+    "node": "18.x"
   }
 }
-
