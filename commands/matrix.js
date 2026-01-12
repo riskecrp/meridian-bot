@@ -94,19 +94,26 @@ export default {
                 )
                 .addIntegerOption(o => o.setName("tier").setDescription("New Tier (1-9)").setMinValue(1).setMaxValue(9).setRequired(true))
         )
-        // 4. SET LEAD
+        // 4. SET LEAD (Single Faction)
         .addSubcommand(sub =>
             sub.setName("setlead")
-                .setDescription("Assign a Team Lead.")
+                .setDescription("Assign/Replace Team Lead for ONE faction.")
                 .addStringOption(o => 
                     o.setName("name")
                      .setDescription("Faction Name")
                      .setRequired(true)
                      .setAutocomplete(true)
                 )
-                .addUserOption(o => o.setName("user").setDescription("The Team Lead").setRequired(true))
+                .addUserOption(o => o.setName("user").setDescription("The New Team Lead").setRequired(true))
         )
-        // 5. REMOVE
+        // 5. SWAP LEAD (Bulk Replace)
+        .addSubcommand(sub =>
+            sub.setName("swaplead")
+                .setDescription("Transfer ALL factions from Old Lead to New Lead.")
+                .addUserOption(o => o.setName("old_lead").setDescription("Current Team Lead").setRequired(true))
+                .addUserOption(o => o.setName("new_lead").setDescription("New Team Lead").setRequired(true))
+        )
+        // 6. REMOVE
         .addSubcommand(sub =>
             sub.setName("remove")
                 .setDescription("Remove a faction from the Matrix.")
@@ -128,16 +135,29 @@ export default {
     },
 
     async execute(interaction) {
-        // --- PERMISSIONS ---
-        const requiredRole = "[ECRP] Faction Management";
-        const hasRole = interaction.member.roles.cache.some(r => r.name === requiredRole);
+        // --- PERMISSION CONFIG ---
+        const ROLE_FM_ID = "1457229857749729363";       // [ECRP] Faction Management
+        const ROLE_LEADERSHIP_ID = "1457670376745074730"; // [ECRP] FM Leadership
+
+        const hasFM = interaction.member.roles.cache.has(ROLE_FM_ID);
+        const hasLeadership = interaction.member.roles.cache.has(ROLE_LEADERSHIP_ID);
         
-        if (interaction.options.getSubcommand() !== "view" && !hasRole) {
-            return interaction.reply({ content: `❌ Restricted to **${requiredRole}** only.`, ephemeral: true });
+        const sub = interaction.options.getSubcommand();
+
+        // 1. Permission Check for VIEW
+        if (sub === 'view') {
+            if (!hasFM && !hasLeadership) {
+                return interaction.reply({ content: "❌ You need the **[ECRP] Faction Management** role to view this.", ephemeral: true });
+            }
+        } 
+        // 2. Permission Check for ALL OTHER COMMANDS (Edit/Create/Remove)
+        else {
+            if (!hasLeadership) {
+                return interaction.reply({ content: "❌ Restricted to **[ECRP] FM Leadership**.", ephemeral: true });
+            }
         }
 
         await interaction.deferReply();
-        const sub = interaction.options.getSubcommand();
         const factionName = interaction.options.getString("name");
 
         try {
@@ -214,11 +234,18 @@ export default {
                 return interaction.editReply(`✅ **${factionName}** promoted to **Tier ${tier}** on ${today}.`);
             }
 
-            // --- SET LEAD ---
+            // --- SET LEAD (Single) ---
             if (sub === "setlead") {
                 const user = interaction.options.getUser("user");
                 const rowNum = await findFactionRow("FactionData", factionName);
                 if (!rowNum) return interaction.editReply(`❌ Could not find **${factionName}** in FactionData.`);
+
+                const checkRes = await sheets.spreadsheets.values.get({
+                    spreadsheetId: GOOGLE_SHEET_ID,
+                    range: `FactionData!B${rowNum}`
+                });
+                const oldLeadId = checkRes.data.values?.[0]?.[0];
+                const oldLeadText = (oldLeadId && oldLeadId !== "None") ? `<@${oldLeadId}>` : "Nobody";
 
                 await sheets.spreadsheets.values.update({
                     spreadsheetId: GOOGLE_SHEET_ID,
@@ -227,7 +254,41 @@ export default {
                     requestBody: { values: [[user.id]] }
                 });
 
-                return interaction.editReply(`✅ **${factionName}** is now led by ${user}.`);
+                return interaction.editReply(`✅ **${factionName}**: Replaced ${oldLeadText} with ${user}.`);
+            }
+
+            // --- SWAP LEAD (Bulk) ---
+            if (sub === "swaplead") {
+                const oldUser = interaction.options.getUser("old_lead");
+                const newUser = interaction.options.getUser("new_lead");
+
+                const res = await sheets.spreadsheets.values.get({
+                     spreadsheetId: GOOGLE_SHEET_ID,
+                     range: "FactionData!A:D"
+                });
+                
+                let rows = res.data.values || [];
+                let updatesCount = 0;
+
+                for (let i = 1; i < rows.length; i++) {
+                    if (rows[i][1] === oldUser.id) {
+                        rows[i][1] = newUser.id;
+                        updatesCount++;
+                    }
+                }
+
+                if (updatesCount === 0) {
+                     return interaction.editReply(`❌ No factions found led by ${oldUser}.`);
+                }
+
+                await sheets.spreadsheets.values.update({
+                    spreadsheetId: GOOGLE_SHEET_ID,
+                    range: "FactionData!A:D",
+                    valueInputOption: "USER_ENTERED",
+                    requestBody: { values: rows }
+                });
+
+                return interaction.editReply(`✅ **Transfer Complete:** Replaced ${oldUser} with ${newUser} on **${updatesCount}** factions.`);
             }
 
             // --- REMOVE ---
