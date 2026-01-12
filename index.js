@@ -1104,7 +1104,7 @@ client.on("interactionCreate", async interaction => {
             }
 
             if (sceneRow === -1) {
-                return interaction.editReply({ content: `❌ Scene "${sceneName}" not found. Use /addscene to create it first.` });
+                return interaction.editReply({ content: `❌ Scene "${sceneName}" not found in the database.` });
             }
 
             const currentData = rows[sceneRow - 1];
