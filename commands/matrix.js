@@ -208,18 +208,18 @@ export default {
                 }
 
                 // --- BUILD EXPLICIT LINKS ---
-                const feedbackStatus = row[4] ? `<:feedback:1099035227705573427> <#${row[4]}>` : "❌ **Feedback:** Not Set";
-                const forumStatus = row[5] ? `📄 [Forum Thread](${row[5]})` : "❌ **Forum:** Not Set";
-                const discordStatus = row[6] ? `💬 [Discord](${row[6]})` : "❌ **Discord:** Not Set";
+                const feedbackStatus = row[4] ? `Scene Feedback: <1099035227705573427> <#${row[4]}>` : "❌ **Feedback:** Not Set";
+                const forumStatus = row[5] ? `[Forum Thread](${row[5]})` : "❌ **Forum:** Not Set";
+                const discordStatus = row[6] ? `[Discord](${row[6]})` : "❌ **Discord:** Not Set";
                 const linkBlock = `${feedbackStatus}\n${forumStatus}\n${discordStatus}`;
 
                 // --- BUILD EMBED ---
                 const embed = new EmbedBuilder()
-                    .setTitle(`📂 ${row[0]} (Tier ${row[2] || 0})`)
+                    .setTitle(`📂 ${row[0]} - Tier ${row[2] || 0}`)
                     .setColor(0x2b2d31)
                     .addFields(
-                        { name: "📋 Information", value: `**Lead:** ${leadDisplay}\n**Team:** ${roleStatus}\n**Promoted:** ${row[3] || "N/A"}`, inline: true },
-                        { name: "📊 Statistics", value: `**30 Days:** ${monthCount}\n**All Time:** ${allTime}`, inline: true },
+                        { name: "Information", value: `**Lead:** ${leadDisplay}\n**Team:** ${roleStatus}\n**Promoted:** ${row[3] || "N/A"}`, inline: true },
+                        { name: "Scenes Ran", value: `**30 Days:** ${monthCount}\n**All Time:** ${allTime}`, inline: false },
                         { name: "🔗 Quick Links", value: linkBlock, inline: false },
                         { name: "🎁 Recent Rewards", value: rewards.length ? rewards.slice(0, 5).join("\n") : "_No rewards in last 30 days._", inline: false }
                     )
