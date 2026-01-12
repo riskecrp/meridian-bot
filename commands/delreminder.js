@@ -17,25 +17,30 @@ export default {
         const userId = interaction.user.id;
 
         try {
-            // Fetch all reminders
+            // Fetch first 200 rows to find user's reminders
+            // (Assuming most recent are at the top or bottom depending on how you add them, 
+            // but fetching a chunk is safer than fetching 9999)
             const res = await sheets.spreadsheets.values.get({
                 spreadsheetId: GOOGLE_SHEET_ID,
-                range: "Reminders!A2:O500" // Fetch reasonable range
+                range: "Reminders!A2:O200" 
             });
 
             const rows = res.data.values || [];
             const myReminders = [];
 
-            // Filter for reminders created by THIS user that are ACTIVE
             for (let i = 0; i < rows.length; i++) {
                 const row = rows[i];
-                // Row[8] is CreatorID, Row[12] is Status
-                if (row[8] === userId && row[12] !== "completed" && row[12] !== "deleted") {
-                    const text = row[0] || "No text";
-                    const date = row[2] || "No date";
-                    const time = row[1] || "No time";
-                    
-                    // Value must be the SHEET ROW INDEX (i + 2 because we started at A2)
+                if (!row) continue;
+
+                const text = row[0] || "No text";
+                const date = row[2] || "No date";
+                const time = row[1] || "No time";
+                const creatorId = row[8];   // Column I
+                const status = row[12];     // Column M
+
+                // Only show ACTIVE reminders owned by THIS USER
+                if (creatorId === userId && status === "active") {
+                    // We send the ROW INDEX (i + 2) as the value so we know exactly which line to delete
                     myReminders.push({
                         name: `${date} ${time} | ${text.substring(0, 50)}...`,
                         value: (i + 2).toString() 
@@ -43,10 +48,10 @@ export default {
                 }
             }
 
-            // Filter by search term
+            // Filter choices based on what the user types
             const filtered = myReminders
                 .filter(r => r.name.toLowerCase().includes(focusedValue))
-                .slice(0, 25);
+                .slice(0, 25); // Discord limit is 25 choices
 
             await interaction.respond(filtered);
 
@@ -63,7 +68,7 @@ export default {
         await interaction.deferReply({ ephemeral: true });
 
         try {
-            // 1. Verify ownership before deleting (Security check)
+            // 1. Verify ownership (Security Check)
             const checkRes = await sheets.spreadsheets.values.get({
                 spreadsheetId: GOOGLE_SHEET_ID,
                 range: `Reminders!I${rowIndex}` // Check CreatorID column
@@ -72,17 +77,20 @@ export default {
             const ownerId = checkRes.data.values?.[0]?.[0];
 
             if (ownerId !== userId) {
-                return interaction.editReply("❌ Error: You can only delete reminders you created, or this reminder no longer exists.");
+                return interaction.editReply("❌ Error: You can only delete reminders you created.");
             }
 
-            // 2. Delete the row (Clear it)
-            // We clear 15 columns (A to O) to effectively remove it
-            await sheets.spreadsheets.values.clear({
+            // 2. Mark as Deleted
+            // We set status to "deleted" instead of wiping the row. 
+            // The Cron job ignores anything that isn't "active".
+            await sheets.spreadsheets.values.update({
                 spreadsheetId: GOOGLE_SHEET_ID,
-                range: `Reminders!A${rowIndex}:O${rowIndex}`
+                range: `Reminders!M${rowIndex}`, // Status Column
+                valueInputOption: "USER_ENTERED",
+                requestBody: { values: [["deleted"]] }
             });
 
-            return interaction.editReply(`✅ **Reminder Deleted.** (Row ${rowIndex} cleared)`);
+            return interaction.editReply(`✅ **Reminder Deleted.**`);
 
         } catch (err) {
             console.error("DELREMINDER ERROR:", err);
