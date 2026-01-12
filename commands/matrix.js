@@ -106,14 +106,34 @@ export default {
                 )
                 .addUserOption(o => o.setName("user").setDescription("The New Team Lead").setRequired(true))
         )
-        // 5. SWAP LEAD (Bulk Replace)
+        // 5. SET THREAD (Link Forum Thread)
+        .addSubcommand(sub =>
+            sub.setName("setthread")
+                .setDescription("Link a Discord Forum Thread ID to this faction.")
+                .addStringOption(o => 
+                    o.setName("name")
+                     .setDescription("Faction Name")
+                     .setRequired(true)
+                     .setAutocomplete(true)
+                )
+                .addStringOption(o => o.setName("thread_id").setDescription("The Forum Thread ID").setRequired(true))
+        )
+        // 6. SWAP LEAD (Bulk Replace)
         .addSubcommand(sub =>
             sub.setName("swaplead")
                 .setDescription("Transfer ALL factions from Old Lead to New Lead.")
                 .addUserOption(o => o.setName("old_lead").setDescription("Current Team Lead").setRequired(true))
                 .addUserOption(o => o.setName("new_lead").setDescription("New Team Lead").setRequired(true))
         )
-        // 6. REMOVE
+        // 7. UPDATE ROSTER
+        .addSubcommand(sub =>
+            sub.setName("roster")
+                .setDescription("Link a Staff Member to a Team Role (for Feedback pings).")
+                .addUserOption(o => o.setName("user").setDescription("The Staff Member").setRequired(true))
+                .addStringOption(o => o.setName("role_id").setDescription("The Role ID to ping").setRequired(true))
+                .addStringOption(o => o.setName("team_name").setDescription("Team Name (Optional reference)").setRequired(false))
+        )
+        // 8. REMOVE
         .addSubcommand(sub =>
             sub.setName("remove")
                 .setDescription("Remove a faction from the Matrix.")
@@ -150,7 +170,7 @@ export default {
                 return interaction.reply({ content: "❌ You need the **[ECRP] Faction Management** role to view this.", ephemeral: true });
             }
         } 
-        // 2. Permission Check for ALL OTHER COMMANDS (Edit/Create/Remove)
+        // 2. Permission Check for ALL OTHER COMMANDS
         else {
             if (!hasLeadership) {
                 return interaction.reply({ content: "❌ Restricted to **[ECRP] FM Leadership**.", ephemeral: true });
@@ -158,7 +178,7 @@ export default {
         }
 
         await interaction.deferReply();
-        const factionName = interaction.options.getString("name");
+        const factionName = interaction.options.getString("name"); // Will be null for 'swaplead' or 'roster'
 
         try {
             // --- CREATE ---
@@ -181,9 +201,9 @@ export default {
                 const today = getTodayDate();
                 await sheets.spreadsheets.values.append({
                     spreadsheetId: GOOGLE_SHEET_ID,
-                    range: "FactionData!A:D",
+                    range: "FactionData!A:E",
                     valueInputOption: "USER_ENTERED",
-                    requestBody: { values: [[factionName, "None", "0", today]] }
+                    requestBody: { values: [[factionName, "None", "0", today, ""]] }
                 });
 
                 return interaction.editReply(`✅ **${factionName}** initialized in the Matrix.`);
@@ -196,12 +216,31 @@ export default {
 
                 const res = await sheets.spreadsheets.values.get({
                     spreadsheetId: GOOGLE_SHEET_ID,
-                    range: `FactionData!A${rowNum}:D${rowNum}`
+                    range: `FactionData!A${rowNum}:E${rowNum}`
                 });
 
                 const row = res.data.values ? res.data.values[0] : [];
+                // row = [Name, LeadID, Tier, Date, ThreadID]
+
                 const leadId = row[1];
                 const leadDisplay = (leadId && leadId !== "None") ? `<@${leadId}>` : "None Assigned";
+                
+                const threadStatus = row[4] ? `✅ Linked (<#${row[4]}>)` : "❌ Not Set";
+
+                // Resolve Team Role via StaffRoster
+                let roleStatus = "❌ Not Set";
+                if (leadId && leadId !== "None") {
+                     const rosterRes = await sheets.spreadsheets.values.get({
+                        spreadsheetId: GOOGLE_SHEET_ID,
+                        range: "StaffRoster!A:B" 
+                    });
+                    const rosterRow = (rosterRes.data.values || []).find(r => r[0] === leadId);
+                    if (rosterRow && rosterRow[1]) {
+                        roleStatus = `✅ <@&${rosterRow[1]}>`;
+                    } else {
+                        roleStatus = "⚠️ Lead has no Roster entry";
+                    }
+                }
 
                 const embed = new EmbedBuilder()
                     .setTitle(`📂 Faction Matrix: ${row[0] || factionName}`)
@@ -209,8 +248,10 @@ export default {
                     .addFields(
                         { name: "Faction Name", value: row[0] || factionName, inline: false },
                         { name: "Faction Team Lead", value: leadDisplay, inline: false },
-                        { name: "Current Tier", value: row[2] || "0", inline: false },
-                        { name: "Last Promotion Date", value: row[3] || "N/A", inline: false }
+                        { name: "Current Tier", value: row[2] || "0", inline: true },
+                        { name: "Last Promotion", value: row[3] || "N/A", inline: true },
+                        { name: "Feedback Thread", value: threadStatus, inline: false },
+                        { name: "Staff Team", value: roleStatus, inline: false }
                     )
                     .setFooter({ text: "[ECRP] Faction Management System" });
 
@@ -257,6 +298,24 @@ export default {
                 return interaction.editReply(`✅ **${factionName}**: Replaced ${oldLeadText} with ${user}.`);
             }
 
+            // --- SET THREAD (New) ---
+            if (sub === "setthread") {
+                const threadId = interaction.options.getString("thread_id");
+                const rowNum = await findFactionRow("FactionData", factionName);
+                if (!rowNum) return interaction.editReply(`❌ Could not find **${factionName}** in FactionData.`);
+
+                // Update Column E (Index 4 is E if 0=A. Sheet columns are A=1, E=5)
+                // Range `FactionData!E${rowNum}`
+                await sheets.spreadsheets.values.update({
+                    spreadsheetId: GOOGLE_SHEET_ID,
+                    range: `FactionData!E${rowNum}`,
+                    valueInputOption: "USER_ENTERED",
+                    requestBody: { values: [[threadId]] }
+                });
+
+                return interaction.editReply(`✅ **${factionName}** thread linked to <#${threadId}>.`);
+            }
+
             // --- SWAP LEAD (Bulk) ---
             if (sub === "swaplead") {
                 const oldUser = interaction.options.getUser("old_lead");
@@ -289,6 +348,46 @@ export default {
                 });
 
                 return interaction.editReply(`✅ **Transfer Complete:** Replaced ${oldUser} with ${newUser} on **${updatesCount}** factions.`);
+            }
+
+            // --- UPDATE ROSTER ---
+            if (sub === "roster") {
+                const user = interaction.options.getUser("user");
+                const roleId = interaction.options.getString("role_id");
+                const teamName = interaction.options.getString("team_name") || "Staff Team";
+
+                const res = await sheets.spreadsheets.values.get({
+                    spreadsheetId: GOOGLE_SHEET_ID,
+                    range: "StaffRoster!A:A"
+                });
+                
+                const rows = res.data.values || [];
+                let existingRowIndex = -1;
+
+                for (let i = 0; i < rows.length; i++) {
+                    if (rows[i][0] === user.id) {
+                        existingRowIndex = i + 1;
+                        break;
+                    }
+                }
+
+                if (existingRowIndex > -1) {
+                    await sheets.spreadsheets.values.update({
+                        spreadsheetId: GOOGLE_SHEET_ID,
+                        range: `StaffRoster!B${existingRowIndex}:C${existingRowIndex}`,
+                        valueInputOption: "USER_ENTERED",
+                        requestBody: { values: [[roleId, teamName]] }
+                    });
+                    return interaction.editReply(`✅ **Roster Updated:** ${user} is now linked to Role ID \`${roleId}\` (${teamName}).`);
+                } else {
+                    await sheets.spreadsheets.values.append({
+                        spreadsheetId: GOOGLE_SHEET_ID,
+                        range: "StaffRoster!A:C",
+                        valueInputOption: "USER_ENTERED",
+                        requestBody: { values: [[user.id, roleId, teamName]] }
+                    });
+                    return interaction.editReply(`✅ **Roster Added:** ${user} linked to Role ID \`${roleId}\` (${teamName}).`);
+                }
             }
 
             // --- REMOVE ---
