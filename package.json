@@ -10,9 +10,9 @@
   "dependencies": {
     "discord.js": "^14.16.3",
     "googleapis": "^144.0.0",
-    "dotenv": "^16.4.5"
-        "luxon": "^3.x.x",
-    "node-cron": "^3.0.x"
+    "dotenv": "^16.4.5",
+    "luxon": "^3.4.4",
+    "node-cron": "^3.0.3"
   },
   "engines": {
     "node": "18.x"
