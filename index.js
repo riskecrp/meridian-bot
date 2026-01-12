@@ -231,120 +231,40 @@ client.on("interactionCreate", async interaction => {
 // ───────────────────────────────────────────────
 async function checkReminders() {
     try {
+        console.log("--- START DIAGNOSTIC CHECK ---");
+        
+        // Fetch ALL data to ensure we see everything
         const res = await sheets.spreadsheets.values.get({ 
             spreadsheetId: GOOGLE_SHEET_ID, 
-            range: "Reminders!A2:O100" 
+            range: "Reminders!A1:O20" 
         });
         
         const rows = res.data.values || [];
-        if (rows.length === 0) return;
+        if (rows.length === 0) {
+            console.log("Sheet is completely empty!");
+            return;
+        }
+
+        // Log Header to verify column order
+        console.log(`HEADERS: ${JSON.stringify(rows[0])}`);
+        
+        // Check Row 2 (Index 1) specifically
+        if (rows.length > 1) {
+            const r = rows[1];
+            console.log(`ROW 2 RAW DATA: ${JSON.stringify(r)}`);
+            console.log(`[Col E] UTC Time: '${r[4]}'`);
+            console.log(`[Col F] UTC Date: '${r[5]}'`);
+            console.log(`[Col M] Status:   '${r[12]}'`);
+            console.log(`[Col N] Chan ID:  '${r[13]}'`);
+        }
 
         const now = DateTime.now().setZone("UTC");
-        const guild = await client.guilds.fetch(GUILD_ID);
+        console.log(`SYSTEM TIME (UTC): ${now.toFormat("yyyy-MM-dd HH:mm")}`);
 
-        for (let i = 0; i < rows.length; i++) {
-            try {
-                const r = rows[i];
-                let status = r[12]?.trim().toLowerCase();
-                if (!r || status === "completed" || !status) continue;
-
-                // --- THE FIX: Auto-Fix Time Formatting ---
-                let dateStr = r[5]?.trim(); // UTC Date
-                let timeStr = r[4]?.trim(); // UTC Time
-                
-                // If time is like "3:28", pad it to "03:28"
-                if (timeStr && timeStr.indexOf(":") > -1 && timeStr.length < 5) {
-                    timeStr = timeStr.padStart(5, "0");
-                }
-
-                // Construct ISO: "YYYY-MM-DDTHH:mm"
-                const rDt = DateTime.fromISO(`${dateStr}T${timeStr}`, { zone: "UTC" });
-                
-                if (!rDt.isValid) {
-                    console.log(`[SKIP] Row ${i+2}: Invalid Date (${dateStr} ${timeStr})`);
-                    continue;
-                }
-
-                const diffMinutes = rDt.diff(now, 'minutes').minutes;
-                const chanId = r[13];
-                const channel = await guild.channels.fetch(chanId).catch(() => null);
-                if (!channel) {
-                    console.log(`[SKIP] Row ${i+2}: Invalid Channel ID`);
-                    continue;
-                }
-
-                // ─── 1. 30-MINUTE WARNING ───
-                if (status === "active" && diffMinutes <= 30 && diffMinutes > 20) {
-                    const mention = await resolvePing(guild, r[10], r[11]);
-                    
-                    const embed = new EmbedBuilder()
-                        .setColor(0xffa500) // Orange
-                        .setTitle("⏰ 30-MINUTE WARNING")
-                        .setDescription(`**Event:** ${r[0]}\n**Time:** <t:${Math.floor(rDt.toSeconds())}:R>`);
-
-                    await channel.send({ 
-                        content: `${mention}`, 
-                        embeds: [embed],
-                        allowedMentions: { parse: ['users', 'roles'] }
-                    });
-
-                    await sheets.spreadsheets.values.update({
-                        spreadsheetId: GOOGLE_SHEET_ID, range: `Reminders!M${i + 2}`,
-                        valueInputOption: "USER_ENTERED", requestBody: { values: [["warned"]] }
-                    });
-                    console.log(`[SENT] 30m warning for row ${i+2}`);
-                }
-
-                // ─── 2. FINAL ALERT ───
-                if (diffMinutes <= 0 && diffMinutes > -10) {
-                    const mention = await resolvePing(guild, r[10], r[11]);
-
-                    const embed = new EmbedBuilder()
-                        .setColor(0xff0000) // Red
-                        .setTitle("🔔 EVENT REMINDER")
-                        .setDescription(`**Happening Now:** ${r[0]}`);
-
-                    await channel.send({ 
-                        content: `${mention}`, 
-                        embeds: [embed],
-                        allowedMentions: { parse: ['users', 'roles'] }
-                    });
-                    console.log(`[SENT] Final alert for row ${i+2}`);
-
-                    // ─── CLEANUP / RECURRENCE ───
-                    const recurrence = r[6]?.toLowerCase();
-                    
-                    if (recurrence === "none" || !recurrence) {
-                        // DELETE ROW
-                        await sheets.spreadsheets.batchUpdate({
-                            spreadsheetId: GOOGLE_SHEET_ID,
-                            requestBody: {
-                                requests: [{ 
-                                    deleteDimension: { 
-                                        range: { sheetId: REMINDER_TAB_GID, dimension: "ROWS", startIndex: i + 1, endIndex: i + 2 } 
-                                    } 
-                                }]
-                            }
-                        });
-                    } else {
-                        // UPDATE DATE for Recurrence
-                        let nextDt = rDt;
-                        if (recurrence === "daily") nextDt = rDt.plus({ days: 1 });
-                        if (recurrence === "weekly") nextDt = rDt.plus({ weeks: 1 });
-                        if (recurrence === "monthly") nextDt = rDt.plus({ months: 1 });
-
-                        await sheets.spreadsheets.values.update({
-                            spreadsheetId: GOOGLE_SHEET_ID, range: `Reminders!E${i + 2}:F${i + 2}`,
-                            valueInputOption: "USER_ENTERED", 
-                            requestBody: { values: [[nextDt.toFormat("HH:mm"), nextDt.toFormat("yyyy-MM-dd")]] }
-                        });
-                        await sheets.spreadsheets.values.update({
-                            spreadsheetId: GOOGLE_SHEET_ID, range: `Reminders!M${i + 2}`,
-                            valueInputOption: "USER_ENTERED", 
-                            requestBody: { values: [["active"]] }
-                        });
-                    }
-                }
+        // ... (Rest of logic skipped for diagnostic run) ...
+        
+    } catch (e) { console.error("DIAGNOSTIC ERROR:", e); }
+}
 
             } catch (err) {
                 console.error(`[ROW ERROR] Index ${i}:`, err.message);
