@@ -24,6 +24,27 @@ const GOOGLE_SHEET_ID = process.env.GOOGLE_SHEET_ID;
 // ROLE IDS
 const FACTION_MANAGEMENT_ROLE_ID = "1457229857749729363";
 
+// REMINDER SHEET HEADERS
+const REMINDER_SHEET_HEADERS = [
+    "Reminder Text",
+    "Input Time",
+    "Input Date",
+    "Input Timezone",
+    "UTC Time",
+    "UTC Date",
+    "Recurrence",
+    "Creator",
+    "Creator Role",
+    "Visibility",
+    "Target Type",
+    "Target Value",
+    "Status",
+    "Channel ID",
+    "Channel Name",
+    "Notification Role ID",
+    "Notification Role Name"
+];
+
 // GOOGLE AUTH
 const auth = new google.auth.JWT(
     GOOGLE_CLIENT_EMAIL,
@@ -326,6 +347,16 @@ const setReminderCmd = new SlashCommandBuilder()
             .setDescription("Date (YYYY-MM-DD)")
             .setRequired(true)
     )
+    .addChannelOption(o =>
+        o.setName("channel")
+            .setDescription("Channel where reminder will be posted")
+            .setRequired(true)
+    )
+    .addRoleOption(o =>
+        o.setName("notification_role")
+            .setDescription("Role to notify (optional - in addition to target)")
+            .setRequired(false)
+    )
     .addStringOption(o =>
         o.setName("target_type")
             .setDescription("Who should receive the reminder ping")
@@ -587,6 +618,11 @@ function chunkLinesToFieldValues(lines, maxLen = 1024) {
     if (current) chunks.push(current);
 
     return chunks;
+}
+
+// Get the last column letter for the Reminders sheet based on header count
+function getReminderSheetLastColumn() {
+    return numberToColumnLetter(REMINDER_SHEET_HEADERS.length);
 }
 
 // ───────────────────────────────────────────────
@@ -1541,6 +1577,8 @@ client.on("interactionCreate", async interaction => {
         const text = interaction.options.getString("text");
         const time = interaction.options.getString("time");
         const date = interaction.options.getString("date");
+        const channel = interaction.options.getChannel("channel");
+        const notificationRole = interaction.options.getRole("notification_role");
         const targetType = interaction.options.getString("target_type");
         const targetValue = interaction.options.getString("target_value");
         const recurrence = interaction.options.getString("recurrence") || "none";
@@ -1551,6 +1589,14 @@ client.on("interactionCreate", async interaction => {
         const memberRoles = interaction.member?.roles?.cache;
         const factionMgmtRole = memberRoles?.find(r => r.id === FACTION_MANAGEMENT_ROLE_ID);
         const creatorRole = factionMgmtRole ? factionMgmtRole.name : "Unknown";
+        
+        // Store channel ID and name
+        const channelId = channel.id;
+        const channelName = channel.name;
+        
+        // Store notification role ID and name (if provided)
+        const notificationRoleId = notificationRole ? notificationRole.id : "";
+        const notificationRoleName = notificationRole ? notificationRole.name : "";
 
         try {
             await interaction.deferReply({ ephemeral: true });
@@ -1583,28 +1629,30 @@ client.on("interactionCreate", async interaction => {
                 return interaction.editReply({ content: "❌ Error converting time to UTC. Please check your date/time values." });
             }
 
-            // Ensure the tab exists with updated headers including UTC columns
-            await ensureSheetTab("Reminders", [
-                "Reminder Text", "Input Time", "Input Date", "Input Timezone", "UTC Time", "UTC Date", "Recurrence", "Creator", "Creator Role", "Visibility", "Target Type", "Target Value", "Status"
-            ]);
+            // Ensure the tab exists with updated headers including UTC columns, channel, and notification role
+            await ensureSheetTab("Reminders", REMINDER_SHEET_HEADERS);
 
-            // Add the reminder with UTC conversion and target information
+            // Add the reminder with UTC conversion, target information, channel, and notification role
             // Status: "active" for new reminders
             const nextRow = await findNextRowInTab("Reminders", "A");
+            const lastCol = getReminderSheetLastColumn();
             await sheets.spreadsheets.values.update({
                 spreadsheetId: GOOGLE_SHEET_ID,
-                range: `Reminders!A${nextRow}:M${nextRow}`,
+                range: `Reminders!A${nextRow}:${lastCol}${nextRow}`,
                 valueInputOption: "USER_ENTERED",
                 requestBody: {
-                    values: [[text, time, date, timezone, utcConversion.utcTime, utcConversion.utcDate, recurrence, creator, creatorRole, visibility, targetType, targetValue, "active"]]
+                    values: [[text, time, date, timezone, utcConversion.utcTime, utcConversion.utcDate, recurrence, creator, creatorRole, visibility, targetType, targetValue, "active", channelId, channelName, notificationRoleId, notificationRoleName]]
                 }
             });
+
+            const notificationRoleText = notificationRoleName ? `\n**Notification Role:** ${notificationRoleName}` : "";
 
             return interaction.editReply({ 
                 content: `✅ Reminder set!\n\n` +
                          `**Your Time:** ${date} at ${time} (${timezone})\n` +
                          `**UTC Time:** ${utcConversion.utcDate} at ${utcConversion.utcTime}\n` +
-                         `**Target:** ${targetType} - ${targetValue}\n` +
+                         `**Channel:** #${channelName}\n` +
+                         `**Target:** ${targetType} - ${targetValue}${notificationRoleText}\n` +
                          `**Visibility:** ${visibility}\n` +
                          `**Recurrence:** ${recurrence}\n\n` +
                          `⏰ Pings will be sent 30 minutes before and at the event time.` 
@@ -1660,10 +1708,11 @@ client.on("interactionCreate", async interaction => {
                 return interaction.reply({ embeds: [embedEmpty], ephemeral: true });
             }
 
-            // Get reminders - now includes UTC columns and status
+            // Get reminders - now includes UTC columns, status, channel, and notification role
+            const lastCol = getReminderSheetLastColumn();
             const res = await sheets.spreadsheets.values.get({
                 spreadsheetId: GOOGLE_SHEET_ID,
-                range: "Reminders!A:M"
+                range: `Reminders!A:${lastCol}`
             });
 
             const rows = res.data.values || [];
@@ -1685,6 +1734,10 @@ client.on("interactionCreate", async interaction => {
                 const targetType = row[10] || "user"; // Default to user for backwards compatibility
                 const targetValue = row[11] || "";
                 const status = row[12] || "active"; // Default to active
+                const channelId = row[13] || "";
+                const channelName = row[14] || "";
+                const notificationRoleId = row[15] || "";
+                const notificationRoleName = row[16] || "";
 
                 // Skip completed reminders (unless they're recurring)
                 if (status === "completed" && recurrence === "none") {
@@ -1719,7 +1772,9 @@ client.on("interactionCreate", async interaction => {
                         visibility,
                         targetType,
                         targetValue,
-                        status
+                        status,
+                        channelName,
+                        notificationRoleName
                     });
                 }
             }
@@ -1737,12 +1792,14 @@ client.on("interactionCreate", async interaction => {
                 return interaction.reply({ embeds: [embedEmpty], ephemeral: true });
             }
 
-            // Build reminder lines with target information
+            // Build reminder lines with target, channel, and notification role information
             const lines = reminders.map(r => {
                 const recurrenceText = r.recurrence !== "none" ? ` (${r.recurrence})` : "";
                 const statusText = r.status === "completed" ? " [COMPLETED]" : "";
                 const targetInfo = r.targetType && r.targetValue ? `\n🎯 Target: ${r.targetType} - ${r.targetValue}` : "";
-                return `**${r.displayDate}** at ${r.displayTime} (${r.timezone})${recurrenceText}${statusText}\n${r.text}${targetInfo}\n_UTC: ${r.utcDate} ${r.utcTime} | Created by: ${r.creator} | Visibility: ${r.visibility}_`;
+                const channelInfo = r.channelName ? `\n📢 Channel: #${r.channelName}` : "";
+                const roleInfo = r.notificationRoleName ? `\n👥 Notification Role: ${r.notificationRoleName}` : "";
+                return `**${r.displayDate}** at ${r.displayTime} (${r.timezone})${recurrenceText}${statusText}\n${r.text}${targetInfo}${channelInfo}${roleInfo}\n_UTC: ${r.utcDate} ${r.utcTime} | Created by: ${r.creator} | Visibility: ${r.visibility}_`;
             });
 
             // Chunk into fields
@@ -1839,14 +1896,17 @@ client.on("interactionCreate", async interaction => {
                     value: 
                         `**\`/setreminder\`** - Create a reminder\n` +
                         `• Roles: [ECRP] Faction Management\n` +
-                        `• Example: \`/setreminder text:Meeting time:14:00 date:2024-01-20 target_type:user target_value:JohnDoe\`\n` +
+                        `• Example: \`/setreminder text:Meeting time:14:00 date:2024-01-20 channel:#general target_type:user target_value:JohnDoe\`\n` +
+                        `• Select channel where reminder will be posted (dropdown of all accessible channels)\n` +
+                        `• Optionally select a notification role to mention (in addition to target)\n` +
                         `• Select target (user or role) to specify who receives pings\n` +
                         `• Pings sent 30 minutes before and at event time\n` +
                         `• Supports one-time or recurring (daily/weekly/monthly)\n⠀\n` +
                         `**\`/listreminders\`** - View your reminders\n` +
                         `• Roles: [ECRP] Faction Management\n` +
                         `• Shows reminders targeting you or your roles\n` +
-                        `• Also shows reminders based on visibility (private/role/public)\n⠀`
+                        `• Also shows reminders based on visibility (private/role/public)\n` +
+                        `• Displays channel and notification role for each reminder\n⠀`
                 },
                 {
                     name: "ℹ️ **Help**",
@@ -1921,10 +1981,11 @@ async function getNotificationChannel(client) {
 // Check reminders and send notifications
 async function checkReminders() {
     try {
-        // Get all active reminders
+        // Get all active reminders - including new channel and notification role columns
+        const lastCol = getReminderSheetLastColumn();
         const res = await sheets.spreadsheets.values.get({
             spreadsheetId: GOOGLE_SHEET_ID,
-            range: "Reminders!A:M"
+            range: `Reminders!A:${lastCol}`
         });
 
         const rows = res.data.values || [];
@@ -1932,6 +1993,9 @@ async function checkReminders() {
 
         const now = DateTime.now().setZone("UTC");
         const nowTimestamp = now.toMillis();
+        
+        // Fetch guild once for all reminders
+        const guild = await client.guilds.fetch(GUILD_ID);
 
         for (let i = 1; i < rows.length; i++) {
             const row = rows[i];
@@ -1942,6 +2006,10 @@ async function checkReminders() {
             const targetType = row[10] || "user";
             const targetValue = row[11] || "";
             const status = row[12] || "active";
+            const channelId = row[13] || "";
+            const channelName = row[14] || "";
+            const notificationRoleId = row[15] || "";
+            const notificationRoleName = row[16] || "";
 
             // Skip inactive or completed non-recurring reminders
             if (status !== "active") continue;
@@ -1962,22 +2030,59 @@ async function checkReminders() {
             const shouldNotifyNow = nowTimestamp >= reminderTimestamp && nowTimestamp < reminderTimestamp + NOTIFICATION_WINDOW_MS;
             const shouldNotify30Mins = nowTimestamp >= thirtyMinsBefore && nowTimestamp < thirtyMinsBefore + NOTIFICATION_WINDOW_MS;
 
-            // Get notification channel
-            const channel = await getNotificationChannel(client);
+            // Get the specified channel or fallback to default
+            let channel = null;
+            
+            if (channelId) {
+                try {
+                    channel = await guild.channels.fetch(channelId);
+                    // Verify bot can send messages in this channel
+                    const botMember = guild.members.me;
+                    if (channel && botMember && !channel.permissionsFor(botMember).has(PermissionFlagsBits.SendMessages)) {
+                        console.warn(`Bot lacks permission to send in channel ${channelName}, using fallback`);
+                        channel = null;
+                    }
+                } catch (err) {
+                    console.warn(`Failed to fetch channel ${channelId} (${channelName}), using fallback:`, err.message);
+                    channel = null;
+                }
+            }
+            
+            // Fallback to default channel if specified channel not available
+            if (!channel) {
+                channel = await getNotificationChannel(client);
+            }
+            
             if (!channel) {
                 console.error("No notification channel available");
                 continue;
             }
 
-            const guild = await client.guilds.fetch(GUILD_ID);
             const mention = await resolveTargetMention(guild, targetType, targetValue);
+            
+            // Build notification role mention if provided
+            let notificationRoleMention = "";
+            if (notificationRoleId) {
+                try {
+                    const role = await guild.roles.fetch(notificationRoleId);
+                    if (role) {
+                        // Include leading space to separate this mention from the target mention
+                        notificationRoleMention = ` <@&${notificationRoleId}>`;
+                    } else {
+                        // Role no longer exists, log warning and skip mention
+                        console.warn(`Notification role ${notificationRoleId} (${notificationRoleName}) no longer exists`);
+                    }
+                } catch (err) {
+                    console.warn(`Failed to fetch notification role ${notificationRoleId} (${notificationRoleName}):`, err.message);
+                }
+            }
 
             // Send 30-minute warning
             if (shouldNotify30Mins && !notifiedReminders.has(thirtyMinsKey)) {
                 const embed = new EmbedBuilder()
                     .setColor(0xffa500)
                     .setTitle("⏰ Reminder - 30 Minutes")
-                    .setDescription(`${mention}\n\n${reminderText}`)
+                    .setDescription(`${mention}${notificationRoleMention}\n\n${reminderText}`)
                     .setFooter({ text: `Scheduled for ${reminderDt.toFormat("yyyy-MM-dd HH:mm")} UTC` });
 
                 await channel.send({ embeds: [embed] });
@@ -1990,7 +2095,7 @@ async function checkReminders() {
                 const embed = new EmbedBuilder()
                     .setColor(0xff0000)
                     .setTitle("🔔 Reminder - NOW")
-                    .setDescription(`${mention}\n\n${reminderText}`)
+                    .setDescription(`${mention}${notificationRoleMention}\n\n${reminderText}`)
                     .setFooter({ text: `Scheduled for ${reminderDt.toFormat("yyyy-MM-dd HH:mm")} UTC` });
 
                 await channel.send({ embeds: [embed] });
