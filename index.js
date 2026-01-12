@@ -24,6 +24,14 @@ const GOOGLE_SHEET_ID = process.env.GOOGLE_SHEET_ID;
 // ROLE IDS
 const FACTION_MANAGEMENT_ROLE_ID = "1457229857749729363";
 
+// REMINDER SHEET HEADERS
+const REMINDER_SHEET_HEADERS = [
+    "Reminder Text", "Input Time", "Input Date", "Input Timezone", 
+    "UTC Time", "UTC Date", "Recurrence", "Creator", "Creator Role", 
+    "Visibility", "Target Type", "Target Value", "Status", 
+    "Channel ID", "Channel Name", "Notification Role ID", "Notification Role Name"
+];
+
 // GOOGLE AUTH
 const auth = new google.auth.JWT(
     GOOGLE_CLIENT_EMAIL,
@@ -1604,9 +1612,7 @@ client.on("interactionCreate", async interaction => {
             }
 
             // Ensure the tab exists with updated headers including UTC columns, channel, and notification role
-            await ensureSheetTab("Reminders", [
-                "Reminder Text", "Input Time", "Input Date", "Input Timezone", "UTC Time", "UTC Date", "Recurrence", "Creator", "Creator Role", "Visibility", "Target Type", "Target Value", "Status", "Channel ID", "Channel Name", "Notification Role ID", "Notification Role Name"
-            ]);
+            await ensureSheetTab("Reminders", REMINDER_SHEET_HEADERS);
 
             // Add the reminder with UTC conversion, target information, channel, and notification role
             // Status: "active" for new reminders
@@ -1966,6 +1972,9 @@ async function checkReminders() {
 
         const now = DateTime.now().setZone("UTC");
         const nowTimestamp = now.toMillis();
+        
+        // Fetch guild once for all reminders
+        const guild = await client.guilds.fetch(GUILD_ID);
 
         for (let i = 1; i < rows.length; i++) {
             const row = rows[i];
@@ -2001,7 +2010,6 @@ async function checkReminders() {
             const shouldNotify30Mins = nowTimestamp >= thirtyMinsBefore && nowTimestamp < thirtyMinsBefore + NOTIFICATION_WINDOW_MS;
 
             // Get the specified channel or fallback to default
-            const guild = await client.guilds.fetch(GUILD_ID);
             let channel = null;
             
             if (channelId) {
@@ -2037,6 +2045,7 @@ async function checkReminders() {
                 try {
                     const role = await guild.roles.fetch(notificationRoleId);
                     if (role) {
+                        // Add leading space to separate from target mention
                         notificationRoleMention = ` <@&${notificationRoleId}>`;
                     } else {
                         // Role no longer exists, log warning and skip mention
