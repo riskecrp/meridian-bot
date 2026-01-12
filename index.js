@@ -6,7 +6,8 @@ import {
     SlashCommandBuilder,
     EmbedBuilder,
     PermissionFlagsBits,
-    AttachmentBuilder
+    AttachmentBuilder,
+    Events
 } from "discord.js";
 
 import { google } from "googleapis";
@@ -352,11 +353,6 @@ const setReminderCmd = new SlashCommandBuilder()
             .setDescription("Channel where reminder will be posted")
             .setRequired(true)
     )
-    .addRoleOption(o =>
-        o.setName("notification_role")
-            .setDescription("Role to notify (optional - in addition to target)")
-            .setRequired(false)
-    )
     .addStringOption(o =>
         o.setName("target_type")
             .setDescription("Who should receive the reminder ping")
@@ -370,6 +366,11 @@ const setReminderCmd = new SlashCommandBuilder()
         o.setName("target_value")
             .setDescription("Username (for user) or Role name (for role)")
             .setRequired(true)
+    )
+    .addRoleOption(o =>
+        o.setName("notification_role")
+            .setDescription("Role to notify (optional - in addition to target)")
+            .setRequired(false)
     )
     .addStringOption(o =>
         o.setName("recurrence")
@@ -502,7 +503,7 @@ const client = new Client({
     intents: [GatewayIntentBits.Guilds]
 });
 
-client.once("ready", () => {
+client.once(Events.ClientReady, () => {
     console.log(`Logged in as ${client.user.tag}`);
     client.user.setPresence({
         activities: [{ name: "Waiting for associate request...", type: 3 }],
