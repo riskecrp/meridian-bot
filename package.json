@@ -2,6 +2,7 @@
   "name": "meridian-bot",
   "version": "1.0.0",
   "main": "index.js",
+  "type": "module",
   "dependencies": {
     "discord.js": "^14.x.x",
     "googleapis": "^105.0.0",
@@ -12,3 +13,4 @@
     "start": "node index.js"
   }
 }
+
