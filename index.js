@@ -11,7 +11,7 @@ import { DateTime } from "luxon";
 import cron from "node-cron";
 
 // ───────────────────────────────────────────────
-// CONFIGURATION & ENV
+// CONFIGURATION
 // ───────────────────────────────────────────────
 const DISCORD_TOKEN = process.env.DISCORD_TOKEN;
 const CLIENT_ID = process.env.CLIENT_ID;
@@ -21,15 +21,7 @@ const GOOGLE_PRIVATE_KEY = process.env.GOOGLE_PRIVATE_KEY.replace(/\\n/g, "\n");
 const GOOGLE_SHEET_ID = process.env.GOOGLE_SHEET_ID;
 
 const FACTION_MANAGEMENT_ROLE_ID = "1457229857749729363";
-const FM_MANAGEMENT_ROLE_NAME = "[ECRP] FM Management";
-const TEAM_LEAD_ROLE_NAME = "Team Lead";
 const REMINDER_GID = 543228518;
-
-const REMINDER_SHEET_HEADERS = [
-    "Reminder Text", "Input Time", "Input Date", "Input Timezone", 
-    "UTC Time", "UTC Date", "Recurrence", "Creator", "Creator Role", 
-    "Visibility", "Target Type", "Target Value", "Status", "Channel ID", "Channel Name"
-];
 
 // ───────────────────────────────────────────────
 // AUTH & CLIENT
@@ -47,6 +39,7 @@ const client = new Client({
     ]
 });
 
+// Use global sets to track notifications during the current runtime
 const notified30m = new Set();
 const notifiedFinal = new Set();
 
@@ -68,166 +61,71 @@ async function resolvePing(guild, type, value) {
     } catch (e) { return `@${value}`; }
 }
 
-function convertToUTC(date, time, timezone = "UTC") {
-    const dt = DateTime.fromFormat(`${date} ${time}`, "yyyy-MM-dd HH:mm", { zone: timezone });
-    return dt.isValid ? { utcDate: dt.toFormat("yyyy-MM-dd"), utcTime: dt.toFormat("HH:mm") } : null;
-}
-
-async function ensureSheetTab(tabName) {
-    const info = await sheets.spreadsheets.get({ spreadsheetId: GOOGLE_SHEET_ID });
-    if (!info.data.sheets.some(s => s.properties.title === tabName)) {
-        await sheets.spreadsheets.batchUpdate({
-            spreadsheetId: GOOGLE_SHEET_ID,
-            requestBody: { requests: [{ addSheet: { properties: { title: tabName } } }] }
-        });
-    }
-}
-
 // ───────────────────────────────────────────────
-// COMMAND DEFINITIONS (Fixed missing descriptions)
+// COMMANDS
 // ───────────────────────────────────────────────
-const commands = [
-    new SlashCommandBuilder()
-        .setName("factioninfo")
-        .setDescription("Lookup intelligence data for a specific faction")
-        .addStringOption(o => o.setName("faction").setDescription("The name of the faction").setRequired(true)),
-
-    new SlashCommandBuilder()
-        .setName("scenecount")
-        .setDescription("View scene history from the last 90 days")
-        .addStringOption(o => o.setName("faction").setDescription("The name of the faction").setRequired(true)),
-
-    new SlashCommandBuilder()
-        .setName("logscene")
-        .setDescription("Record a scene execution")
-        .addStringOption(o => o.setName("scene_name").setDescription("Name of the scene").setRequired(true))
-        .addStringOption(o => o.setName("participants").setDescription("Participating factions").setRequired(true)),
-
-    new SlashCommandBuilder()
-        .setName("addnote")
-        .setDescription("Log a notable interaction for a faction")
-        .addStringOption(o => o.setName("faction").setDescription("Faction involved").setRequired(true))
-        .addStringOption(o => o.setName("note").setDescription("Interaction details").setRequired(true)),
-
-    new SlashCommandBuilder()
-        .setName("getnotes")
-        .setDescription("Retrieve recorded notes")
-        .addStringOption(o => o.setName("faction").setDescription("Faction name").setRequired(true))
-        .addBooleanOption(o => o.setName("all").setDescription("Show full history")),
-
-    new SlashCommandBuilder().setName("help").setDescription("Show command directory"),
-
-    new SlashCommandBuilder().setName("listreminders").setDescription("View scheduled reminders"),
-
+const deploy = [
     new SlashCommandBuilder()
         .setName("setreminder")
         .setDescription("Set a reminder with auto-pings")
-        .addStringOption(o => o.setName("text").setDescription("Content of the reminder").setRequired(true))
-        .addStringOption(o => o.setName("time").setDescription("HH:MM (24h UTC format)").setRequired(true))
-        .addStringOption(o => o.setName("date").setDescription("YYYY-MM-DD format").setRequired(true))
+        .addStringOption(o => o.setName("text").setDescription("Content").setRequired(true))
+        .addStringOption(o => o.setName("time").setDescription("HH:MM (24h UTC)").setRequired(true))
+        .addStringOption(o => o.setName("date").setDescription("YYYY-MM-DD").setRequired(true))
         .addChannelOption(o => o.setName("channel").setDescription("Where to ping").addChannelTypes(0).setRequired(true))
-        .addStringOption(o => o.setName("target_type").setDescription("Target Type (User/Role)").setRequired(true).addChoices({name:"User", value:"user"},{name:"Role", value:"role"}))
+        .addStringOption(o => o.setName("target_type").setDescription("User or Role").setRequired(true).addChoices({name:"User", value:"user"},{name:"Role", value:"role"}))
         .addStringOption(o => o.setName("target_value").setDescription("Username or Role Name").setRequired(true))
-        .addStringOption(o => o.setName("recurrence").setDescription("Pattern of recurrence").addChoices({name:"None", value:"none"},{name:"Daily", value:"daily"},{name:"Weekly", value:"weekly"},{name:"Monthly", value:"monthly"}))
-        .addStringOption(o => o.setName("timezone").setDescription("Timezone (Default: UTC)")),
-
-    new SlashCommandBuilder()
-        .setName("adddossier")
-        .setDescription("Manage intelligence entries")
-        .addSubcommand(s => s.setName("person").setDescription("Add a person to the database")
-            .addStringOption(o => o.setName("faction").setDescription("Faction name").setRequired(true))
-            .addStringOption(o => o.setName("character").setDescription("Character name").setRequired(true))
-            .addStringOption(o => o.setName("phone").setDescription("Phone number"))
-            .addStringOption(o => o.setName("personaladdress").setDescription("Residential address"))
-            .addBooleanOption(o => o.setName("leader").setDescription("Is this character a leader?")))
-        .addSubcommand(s => s.setName("location").setDescription("Add a location to the database")
-            .addStringOption(o => o.setName("faction").setDescription("Owning faction").setRequired(true))
-            .addStringOption(o => o.setName("address").setDescription("Street address").setRequired(true))
-            .addBooleanOption(o => o.setName("is_hq").setDescription("Is this an HQ?").setRequired(true))),
-
-    new SlashCommandBuilder()
-        .setName("addproperty")
-        .setDescription("Log a new property reward")
-        .addStringOption(o => o.setName("date").setDescription("Date given (YYYY-MM-DD)").setRequired(true))
-        .addStringOption(o => o.setName("faction").setDescription("Recipient faction").setRequired(true))
-        .addStringOption(o => o.setName("address").setDescription("Property address").setRequired(true))
-        .addStringOption(o => o.setName("type").setDescription("Type of reward").setRequired(true).addChoices({name:"HQ",value:"HQ"},{name:"Warehouse",value:"Warehouse"},{name:"Property",value:"Property"}))
-        .addBooleanOption(o => o.setName("confiscated").setDescription("Already confiscated?").setRequired(true)),
-
-    new SlashCommandBuilder().setName("listproperties").setDescription("List master property log"),
-
-    new SlashCommandBuilder()
-        .setName("confiscateproperty")
-        .setDescription("Mark a property as confiscated")
-        .addStringOption(o => o.setName("date").setDescription("Date of confiscation").setRequired(true))
-        .addStringOption(o => o.setName("faction").setDescription("Faction name").setRequired(true))
-        .addStringOption(o => o.setName("address").setDescription("Address of property").setRequired(true))
-        .addStringOption(o => o.setName("type").setDescription("Type of property").setRequired(true))
-        .addBooleanOption(o => o.setName("confiscated").setDescription("Set to true to confirm").setRequired(true))
+        .addStringOption(o => o.setName("recurrence").setDescription("Pattern").addChoices({name:"None", value:"none"},{name:"Daily", value:"daily"},{name:"Weekly", value:"weekly"},{name:"Monthly", value:"monthly"}))
 ];
 
-// ───────────────────────────────────────────────
-// STARTUP & CRON
-// ───────────────────────────────────────────────
 client.once("ready", async () => {
-    try {
-        const rest = new REST({ version: "10" }).setToken(DISCORD_TOKEN);
-        await rest.put(Routes.applicationGuildCommands(CLIENT_ID, GUILD_ID), { body: commands });
-        console.log("[SYSTEM] Meridian Bot Online & Commands Registered");
-        cron.schedule("* * * * *", () => checkReminders());
-    } catch (e) { console.error("Registration Error:", e); }
+    const rest = new REST({ version: "10" }).setToken(DISCORD_TOKEN);
+    await rest.put(Routes.applicationGuildCommands(CLIENT_ID, GUILD_ID), { body: deploy });
+    
+    console.log(`[SYSTEM] Bot Online. Initializing loop...`);
+    
+    // Core Loop: Runs every minute
+    cron.schedule("* * * * *", async () => {
+        const timestamp = DateTime.now().setZone("UTC").toFormat("HH:mm:ss");
+        console.log(`[PULSE] Heartbeat at ${timestamp} UTC`);
+        try {
+            await checkReminders();
+        } catch (err) {
+            console.error("[CRON ERROR]", err.message);
+        }
+    });
 });
 
-// ───────────────────────────────────────────────
-// COMMAND HANDLER
-// ───────────────────────────────────────────────
 client.on("interactionCreate", async interaction => {
     if (!interaction.isChatInputCommand()) return;
 
-    const isFM = interaction.member.roles.cache.has(FACTION_MANAGEMENT_ROLE_ID);
-    const isMgt = interaction.member.roles.cache.some(r => r.name === FM_MANAGEMENT_ROLE_NAME);
-    const isTL = interaction.member.roles.cache.some(r => r.name === TEAM_LEAD_ROLE_NAME);
-
-    // Permission Gates
-    const fmCmds = ["factioninfo", "scenecount", "help", "logscene", "addnote", "getnotes", "setreminder", "listreminders"];
-    if (fmCmds.includes(interaction.commandName) && !isFM) return interaction.reply({ content: "❌ Requires [ECRP] Faction Management role.", ephemeral: true });
-    if (interaction.commandName === "adddossier" && !isTL) return interaction.reply({ content: "❌ Requires Team Lead role.", ephemeral: true });
-    if (["addproperty", "listproperties", "confiscateproperty"].includes(interaction.commandName) && !isMgt) return interaction.reply({ content: "❌ Requires [ECRP] FM Management role.", ephemeral: true });
-
     if (interaction.commandName === "setreminder") {
+        const isFM = interaction.member.roles.cache.has(FACTION_MANAGEMENT_ROLE_ID);
+        if (!isFM) return interaction.reply({ content: "Unauthorized.", ephemeral: true });
+
         await interaction.deferReply({ ephemeral: true });
-        const [text, time, date, chan, tType, tVal, rec, tz] = [
+        const [text, time, date, chan, tType, tVal, rec] = [
             interaction.options.getString("text"), interaction.options.getString("time"),
             interaction.options.getString("date"), interaction.options.getChannel("channel"),
             interaction.options.getString("target_type"), interaction.options.getString("target_value"),
-            interaction.options.getString("recurrence") || "none", interaction.options.getString("timezone") || "UTC"
+            interaction.options.getString("recurrence") || "none"
         ];
 
-        const utc = convertToUTC(date, time, tz);
-        if (!utc) return interaction.editReply("❌ Invalid Date/Time format.");
+        // Format validation
+        const dt = DateTime.fromFormat(`${date} ${time}`, "yyyy-MM-dd HH:mm", { zone: "UTC" });
+        if (!dt.isValid) return interaction.editReply("❌ Use YYYY-MM-DD and HH:MM format.");
 
         try {
-            await ensureSheetTab("Reminders");
             const res = await sheets.spreadsheets.values.get({ spreadsheetId: GOOGLE_SHEET_ID, range: "Reminders!A:A" });
-            const row = (res.data.values || []).length + 1;
-            const vals = [text, time, date, tz, utc.utcTime, utc.utcDate, rec, interaction.user.username, "FM", "public", tType, tVal, "active", chan.id, chan.name];
+            const nextRow = (res.data.values || []).length + 1;
+            
+            const values = [text, time, date, "UTC", dt.toFormat("HH:mm"), dt.toFormat("yyyy-MM-dd"), rec, interaction.user.username, "FM", "public", tType, tVal, "active", chan.id, chan.name];
 
             await sheets.spreadsheets.values.update({
-                spreadsheetId: GOOGLE_SHEET_ID, range: `Reminders!A${row}:O${row}`,
-                valueInputOption: "USER_ENTERED", requestBody: { values: [vals] }
+                spreadsheetId: GOOGLE_SHEET_ID, range: `Reminders!A${nextRow}:O${nextRow}`,
+                valueInputOption: "USER_ENTERED", requestBody: { values: [values] }
             });
-            return interaction.editReply(`✅ Reminder logged for **${tVal}** in ${chan}.`);
-        } catch (e) { return interaction.editReply("❌ Spreadsheet error."); }
-    }
-
-    if (interaction.commandName === "help") {
-        const embed = new EmbedBuilder().setColor(0x2b6cb0).setTitle("Meridian Bot Command Directory")
-            .addFields(
-                { name: "🛡️ Faction Management", value: "`/factioninfo`, `/scenecount`, `/logscene`, `/addnote`, `/getnotes`, `/setreminder`, `/listreminders`" },
-                { name: "📁 Team Lead", value: "`/adddossier`" },
-                { name: "💼 FM Management", value: "`/addproperty`, `/listproperties`, `/confiscateproperty`" }
-            );
-        return interaction.reply({ embeds: [embed], ephemeral: true });
+            return interaction.editReply(`✅ Success. Reminder for **${tVal}** logged.`);
+        } catch (e) { return interaction.editReply("❌ Sheet Error."); }
     }
 });
 
@@ -235,60 +133,76 @@ client.on("interactionCreate", async interaction => {
 // REMINDER ENGINE
 // ───────────────────────────────────────────────
 async function checkReminders() {
-    try {
-        const res = await sheets.spreadsheets.values.get({ spreadsheetId: GOOGLE_SHEET_ID, range: "Reminders!A2:O100" });
-        const rows = res.data.values || [];
-        const now = DateTime.now().setZone("UTC");
-        const guild = await client.guilds.fetch(GUILD_ID);
+    // 1. Fetch data from Sheet
+    const res = await sheets.spreadsheets.values.get({ 
+        spreadsheetId: GOOGLE_SHEET_ID, 
+        range: "Reminders!A2:O100" 
+    });
+    
+    const rows = res.data.values || [];
+    if (rows.length === 0) return;
 
-        for (let i = 0; i < rows.length; i++) {
+    const now = DateTime.now().setZone("UTC");
+    const guild = await client.guilds.fetch(GUILD_ID);
+
+    for (let i = 0; i < rows.length; i++) {
+        const r = rows[i];
+        
+        // Status check (Col M = Index 12)
+        if (!r || r.length < 13 || r[12]?.trim().toLowerCase() !== "active") continue;
+
+        // Date/Time Check (Col F=Index 5, Col E=Index 4)
+        const rDt = DateTime.fromFormat(`${r[5]?.trim()} ${r[4]?.trim()}`, "yyyy-MM-dd HH:mm", { zone: "UTC" });
+        if (!rDt.isValid) continue;
+
+        const diff = rDt.diff(now, 'minutes').minutes;
+        const key = `${r[5]}_${r[4]}_${r[11]}_${r[13]}`; 
+
+        // 1. 30-MINUTE WARNING (25 to 30 mins remaining)
+        if (diff <= 30 && diff > 24 && !notified30m.has(key)) {
             try {
-                const r = rows[i];
-                if (!r || r[12] !== "active") continue;
-
-                const rDt = DateTime.fromFormat(`${r[5]?.trim()} ${r[4]?.trim()}`, "yyyy-MM-dd HH:mm", { zone: "UTC" });
-                if (!rDt.isValid) continue;
-
-                const diff = rDt.diff(now, 'minutes').minutes;
-                const key = `${r[5]}_${r[4]}_${r[11]}`;
-
-                // 30m Warning
-                if (diff <= 30 && diff > 25 && !notified30m.has(key)) {
-                    const chan = await guild.channels.fetch(r[13]);
-                    const ping = await resolvePing(guild, r[10], r[11]);
-                    const embed = new EmbedBuilder().setColor(0xffa500).setTitle("⏰ 30-MINUTE WARNING").setDescription(r[0]);
-                    await chan.send({ content: ping, embeds: [embed], allowedMentions: { parse: ['users', 'roles'] } });
-                    notified30m.add(key);
-                }
-
-                // Final Alert & Cleanup
-                if (diff <= 0 && diff > -3 && !notifiedFinal.has(key)) {
-                    const chan = await guild.channels.fetch(r[13]);
-                    const ping = await resolvePing(guild, r[10], r[11]);
-                    const embed = new EmbedBuilder().setColor(0xff0000).setTitle("🔔 EVENT REMINDER").setDescription(r[0]);
-                    await chan.send({ content: ping, embeds: [embed], allowedMentions: { parse: ['users', 'roles'] } });
-                    notifiedFinal.add(key);
-
-                    if (r[6].toLowerCase() === "none") {
-                        await sheets.spreadsheets.batchUpdate({
-                            spreadsheetId: GOOGLE_SHEET_ID,
-                            requestBody: {
-                                requests: [{ deleteDimension: { range: { sheetId: REMINDER_GID, dimension: "ROWS", startIndex: i + 1, endIndex: i + 2 } } }]
-                            }
-                        });
-                    } else {
-                        const next = rDt.plus(r[6].toLowerCase() === "daily" ? { days: 1 } : r[6].toLowerCase() === "weekly" ? { weeks: 1 } : { months: 1 });
-                        await sheets.spreadsheets.values.update({
-                            spreadsheetId: GOOGLE_SHEET_ID, range: `Reminders!F${i + 2}`,
-                            valueInputOption: "USER_ENTERED", requestBody: { values: [[next.toFormat("yyyy-MM-dd")]] }
-                        });
-                        notified30m.delete(key);
-                        notifiedFinal.delete(key);
-                    }
-                }
-            } catch (err) { console.error(`Row ${i+2} Loop Error:`, err.message); }
+                const chan = await guild.channels.fetch(r[13]);
+                const mention = await resolvePing(guild, r[10], r[11]);
+                await chan.send({ 
+                    content: `${mention} **30-MINUTE WARNING**`, 
+                    embeds: [new EmbedBuilder().setColor(0xffa500).setTitle("Upcoming Event").setDescription(r[0])]
+                });
+                notified30m.add(key);
+                console.log(`[SENT] 30m Ping for ${r[11]}`);
+            } catch (e) { console.error(`[SKIP] Could not ping channel ${r[13]}`); }
         }
-    } catch (e) { console.error("Cron Error:", e.message); }
+
+        // 2. FINAL ALERT (Due now or up to 3 mins past)
+        if (diff <= 0 && diff > -4 && !notifiedFinal.has(key)) {
+            try {
+                const chan = await guild.channels.fetch(r[13]);
+                const mention = await resolvePing(guild, r[10], r[11]);
+                await chan.send({ 
+                    content: `${mention} **EVENT STARTING NOW**`, 
+                    embeds: [new EmbedBuilder().setColor(0xff0000).setTitle("Reminder").setDescription(r[0])]
+                });
+                notifiedFinal.add(key);
+                console.log(`[SENT] Final Ping for ${r[11]}`);
+
+                // CLEANUP / RECURRENCE
+                if (r[6]?.toLowerCase() === "none") {
+                    await sheets.spreadsheets.batchUpdate({
+                        spreadsheetId: GOOGLE_SHEET_ID,
+                        requestBody: {
+                            requests: [{ deleteDimension: { range: { sheetId: REMINDER_GID, dimension: "ROWS", startIndex: i + 1, endIndex: i + 2 } } }]
+                        }
+                    });
+                } else {
+                    const rec = r[6].toLowerCase();
+                    const next = rDt.plus(rec === "daily" ? { days: 1 } : rec === "weekly" ? { weeks: 1 } : { months: 1 });
+                    await sheets.spreadsheets.values.update({
+                        spreadsheetId: GOOGLE_SHEET_ID, range: `Reminders!F${i + 2}`,
+                        valueInputOption: "USER_ENTERED", requestBody: { values: [[next.toFormat("yyyy-MM-dd")]] }
+                    });
+                }
+            } catch (e) { console.error(`[SKIP] Final ping failed for ${r[11]}`); }
+        }
+    }
 }
 
 client.login(DISCORD_TOKEN);
