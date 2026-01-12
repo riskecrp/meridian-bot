@@ -5,7 +5,6 @@ import {
     Routes,
     SlashCommandBuilder,
     EmbedBuilder,
-    PermissionFlagsBits
 } from "discord.js";
 import { google } from "googleapis";
 import { DateTime } from "luxon";
@@ -18,12 +17,13 @@ const DISCORD_TOKEN = process.env.DISCORD_TOKEN;
 const CLIENT_ID = process.env.CLIENT_ID;
 const GUILD_ID = process.env.GUILD_ID;
 const GOOGLE_CLIENT_EMAIL = process.env.GOOGLE_CLIENT_EMAIL;
-// Fix private key formatting for Railway env vars
 const GOOGLE_PRIVATE_KEY = process.env.GOOGLE_PRIVATE_KEY?.replace(/\\n/g, "\n");
 const GOOGLE_SHEET_ID = process.env.GOOGLE_SHEET_ID;
 
 // Role IDs & Constants
 const FACTION_MANAGEMENT_ROLE_ID = "1457229857749729363";
+const FM_MANAGEMENT_ROLE_NAME = "[ECRP] FM Management";
+const TEAM_LEAD_ROLE_NAME = "Team Lead";
 const REMINDER_TAB_GID = 543228518; // Specific ID for 'Reminders' tab deletion
 
 // Headers for the Reminder Sheet (Used to ensure tab exists)
@@ -124,22 +124,52 @@ async function ensureSheetTab(tabName, headers = []) {
 // 5. SLASH COMMAND DEFINITIONS
 // ───────────────────────────────────────────────
 const commands = [
-    // --- Existing Commands (Preserved) ---
-    new SlashCommandBuilder().setName("factioninfo").setDescription("Lookup intelligence data for a faction").addStringOption(o => o.setName("faction").setDescription("Faction name").setRequired(true).setAutocomplete(true)),
-    new SlashCommandBuilder().setName("scenecount").setDescription("View scene history (last 90 days)").addStringOption(o => o.setName("faction").setDescription("Faction name").setRequired(true).setAutocomplete(true)),
-    new SlashCommandBuilder().setName("logscene").setDescription("Log a scene execution").addStringOption(o => o.setName("scene_name").setDescription("Name of scene").setRequired(true).setAutocomplete(true)).addStringOption(o => o.setName("participants").setDescription("Factions involved").setRequired(true)),
-    new SlashCommandBuilder().setName("addnote").setDescription("Log a notable interaction").addStringOption(o => o.setName("faction").setDescription("Faction").setRequired(true).setAutocomplete(true)).addStringOption(o => o.setName("note").setDescription("Details").setRequired(true)),
-    new SlashCommandBuilder().setName("getnotes").setDescription("Retrieve notes").addStringOption(o => o.setName("faction").setDescription("Faction").setRequired(true).setAutocomplete(true)).addBooleanOption(o => o.setName("all").setDescription("Show all history")),
+    // --- Intelligence & Scenes ---
+    new SlashCommandBuilder().setName("factioninfo").setDescription("Lookup intelligence data for a faction")
+        .addStringOption(o => o.setName("faction").setDescription("Faction name").setRequired(true).setAutocomplete(true)),
+    new SlashCommandBuilder().setName("scenecount").setDescription("View scene history (last 90 days)")
+        .addStringOption(o => o.setName("faction").setDescription("Faction name").setRequired(true).setAutocomplete(true)),
+    new SlashCommandBuilder().setName("logscene").setDescription("Log a scene execution")
+        .addStringOption(o => o.setName("scene_name").setDescription("Name of scene").setRequired(true).setAutocomplete(true))
+        .addStringOption(o => o.setName("participants").setDescription("Factions involved").setRequired(true)),
+    new SlashCommandBuilder().setName("addnote").setDescription("Log a notable interaction")
+        .addStringOption(o => o.setName("faction").setDescription("Faction").setRequired(true).setAutocomplete(true))
+        .addStringOption(o => o.setName("note").setDescription("Details").setRequired(true)),
+    new SlashCommandBuilder().setName("getnotes").setDescription("Retrieve notes")
+        .addStringOption(o => o.setName("faction").setDescription("Faction").setRequired(true).setAutocomplete(true))
+        .addBooleanOption(o => o.setName("all").setDescription("Show all history")),
     new SlashCommandBuilder().setName("help").setDescription("Show command directory"),
     new SlashCommandBuilder().setName("listreminders").setDescription("View scheduled pings"),
     
+    // --- Dossiers (Fixed Missing Descriptions) ---
     new SlashCommandBuilder().setName("adddossier").setDescription("Manage intel entries")
-        .addSubcommand(s => s.setName("person").setDescription("Add person").addStringOption(o => o.setName("faction").setRequired(true).setAutocomplete(true)).addStringOption(o => o.setName("character").setRequired(true)).addStringOption(o => o.setName("phone").setDescription("Phone")).addStringOption(o => o.setName("personaladdress").setDescription("Address")).addBooleanOption(o => o.setName("leader").setDescription("Is Leader")))
-        .addSubcommand(s => s.setName("location").setDescription("Add location").addStringOption(o => o.setName("faction").setRequired(true).setAutocomplete(true)).addStringOption(o => o.setName("address").setRequired(true)).addBooleanOption(o => o.setName("is_hq").setRequired(true))),
+        .addSubcommand(s => s.setName("person").setDescription("Add person")
+            .addStringOption(o => o.setName("faction").setDescription("Faction Name").setRequired(true).setAutocomplete(true))
+            .addStringOption(o => o.setName("character").setDescription("Character Name").setRequired(true))
+            .addStringOption(o => o.setName("phone").setDescription("Phone Number"))
+            .addStringOption(o => o.setName("personaladdress").setDescription("Address"))
+            .addBooleanOption(o => o.setName("leader").setDescription("Is Leader")))
+        .addSubcommand(s => s.setName("location").setDescription("Add location")
+            .addStringOption(o => o.setName("faction").setDescription("Faction Name").setRequired(true).setAutocomplete(true))
+            .addStringOption(o => o.setName("address").setDescription("Address").setRequired(true))
+            .addBooleanOption(o => o.setName("is_hq").setDescription("Is HQ").setRequired(true))),
     
-    new SlashCommandBuilder().setName("addproperty").setDescription("Log property reward").addStringOption(o => o.setName("date").setRequired(true)).addStringOption(o => o.setName("faction").setRequired(true).setAutocomplete(true)).addStringOption(o => o.setName("address").setRequired(true)).addStringOption(o => o.setName("type").setRequired(true).addChoices({name:"HQ",value:"HQ"},{name:"Warehouse",value:"Warehouse"},{name:"Property",value:"Property"})).addBooleanOption(o => o.setName("confiscated").setRequired(true)),
+    // --- Properties (Fixed Missing Descriptions) ---
+    new SlashCommandBuilder().setName("addproperty").setDescription("Log property reward")
+        .addStringOption(o => o.setName("date").setDescription("Date (YYYY-MM-DD)").setRequired(true))
+        .addStringOption(o => o.setName("faction").setDescription("Faction Name").setRequired(true).setAutocomplete(true))
+        .addStringOption(o => o.setName("address").setDescription("Address").setRequired(true))
+        .addStringOption(o => o.setName("type").setDescription("Type").setRequired(true).addChoices({name:"HQ",value:"HQ"},{name:"Warehouse",value:"Warehouse"},{name:"Property",value:"Property"}))
+        .addBooleanOption(o => o.setName("confiscated").setDescription("Is Confiscated").setRequired(true)),
+    
     new SlashCommandBuilder().setName("listproperties").setDescription("List master property log"),
-    new SlashCommandBuilder().setName("confiscateproperty").setDescription("Mark property as confiscated").addStringOption(o => o.setName("date").setRequired(true)).addStringOption(o => o.setName("faction").setRequired(true).setAutocomplete(true)).addStringOption(o => o.setName("address").setRequired(true)).addStringOption(o => o.setName("type").setRequired(true)).addBooleanOption(o => o.setName("confiscated").setRequired(true)),
+    
+    new SlashCommandBuilder().setName("confiscateproperty").setDescription("Mark property as confiscated")
+        .addStringOption(o => o.setName("date").setDescription("Date of Action").setRequired(true))
+        .addStringOption(o => o.setName("faction").setDescription("Faction Name").setRequired(true).setAutocomplete(true))
+        .addStringOption(o => o.setName("address").setDescription("Address").setRequired(true))
+        .addStringOption(o => o.setName("type").setDescription("Type").setRequired(true))
+        .addBooleanOption(o => o.setName("confiscated").setDescription("Confirm Confiscation").setRequired(true)),
 
     // --- The Fixed Reminder Command ---
     new SlashCommandBuilder().setName("setreminder").setDescription("Set a timezone-aware reminder")
@@ -182,13 +212,17 @@ client.on("interactionCreate", async interaction => {
 
     // Check Roles
     const isFM = interaction.member.roles.cache.has(FACTION_MANAGEMENT_ROLE_ID);
-    const isMgt = interaction.member.roles.cache.some(r => r.name === "[ECRP] FM Management");
-    const isTL = interaction.member.roles.cache.some(r => r.name === "Team Lead");
+    const isMgt = interaction.member.roles.cache.some(r => r.name === FM_MANAGEMENT_ROLE_NAME);
+    const isTL = interaction.member.roles.cache.some(r => r.name === TEAM_LEAD_ROLE_NAME);
+
+    // --- PERMISSION GATES ---
+    const fmCmds = ["factioninfo", "scenecount", "help", "logscene", "addnote", "getnotes", "setreminder", "listreminders"];
+    if (fmCmds.includes(interaction.commandName) && !isFM) return interaction.reply({ content: "❌ Unauthorized: FM Role Required.", ephemeral: true });
+    if (interaction.commandName === "adddossier" && !isTL) return interaction.reply({ content: "❌ Unauthorized: Team Lead Role Required.", ephemeral: true });
+    if (["addproperty", "listproperties", "confiscateproperty"].includes(interaction.commandName) && !isMgt) return interaction.reply({ content: "❌ Unauthorized: FM Management Role Required.", ephemeral: true });
 
     // --- REMINDER LOGIC (Permission: Faction Management) ---
     if (interaction.commandName === "setreminder") {
-        if (!isFM) return interaction.reply({ content: "❌ Unauthorized.", ephemeral: true });
-
         await interaction.deferReply({ ephemeral: true });
 
         // Gather Inputs
@@ -276,7 +310,6 @@ async function checkReminders() {
                 const rDt = DateTime.fromISO(`${dateStr}T${timeStr}`, { zone: "UTC" });
                 
                 if (!rDt.isValid) {
-                    // console.log(`Invalid date at row ${i+2}`);
                     continue;
                 }
 
