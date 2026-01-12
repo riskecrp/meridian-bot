@@ -1,46 +1,45 @@
 import { SlashCommandBuilder, EmbedBuilder } from "discord.js";
 import OpenAI from "openai";
 
-// Initialize OpenAI
-// Ensure OPENAI_API_KEY is set in Railway Variables
-const openai = new OpenAI({
-    apiKey: process.env.OPENAI_API_KEY, 
-});
-
 export default {
     data: new SlashCommandBuilder()
         .setName("summarize")
         .setDescription("Uses AI to summarize this channel's recent storyline and needs."),
 
     async execute(interaction) {
+        // 1. Check for Key NOW (not at startup)
+        if (!process.env.OPENAI_API_KEY) {
+            return interaction.reply({ 
+                content: "❌ **System Error:** No `OPENAI_API_KEY` found in Railway variables.\nPlease create an API key at https://platform.openai.com and add it to your Railway variables.", 
+                ephemeral: true 
+            });
+        }
+
+        // 2. Initialize OpenAI ONLY when command is run
+        const openai = new OpenAI({
+            apiKey: process.env.OPENAI_API_KEY, 
+        });
+
         // PERMISSION CHECK
         const ROLE_LEADERSHIP_ID = "1457670376745074730";
         if (!interaction.member.roles.cache.has(ROLE_LEADERSHIP_ID)) {
             return interaction.reply({ content: "❌ Restricted to FM Leadership.", ephemeral: true });
         }
 
-        if (!process.env.OPENAI_API_KEY) {
-            return interaction.reply({ content: "❌ System Error: No `OPENAI_API_KEY` found in environment variables.", ephemeral: true });
-        }
-
         await interaction.deferReply();
 
         try {
-            // 1. Fetch last 100 messages
+            // 3. Fetch last 100 messages
             const messages = await interaction.channel.messages.fetch({ limit: 100 });
             
-            // 2. Format messages (Content + Embeds)
-            // We read Oldest -> Newest to make sense of the timeline
+            // 4. Format messages
             const conversation = messages.reverse().map(m => {
                 let entry = `[${m.author.username}]: ${m.content}`;
 
-                // Process Embeds (Crucial for Bot Logs/Apps)
                 if (m.embeds.length > 0) {
                     m.embeds.forEach((embed, i) => {
                         entry += `\n   [Embed ${i+1}]: ${embed.title || "No Title"}`;
                         if (embed.description) entry += `\n   Description: ${embed.description}`;
-                        
-                        // Process Fields (common in applications/logs)
                         if (embed.fields && embed.fields.length > 0) {
                             embed.fields.forEach(f => {
                                 entry += `\n   - ${f.name}: ${f.value}`;
@@ -55,9 +54,9 @@ export default {
                 return interaction.editReply("❌ Not enough recent conversation or data to summarize.");
             }
 
-            // 3. Send to AI
+            // 5. Send to AI
             const completion = await openai.chat.completions.create({
-                model: "gpt-4o-mini", // Very cheap, very fast, smart enough for summaries
+                model: "gpt-4o-mini",
                 messages: [
                     { 
                         role: "system", 
@@ -82,8 +81,6 @@ export default {
 
             const summary = completion.choices[0].message.content;
 
-            // 4. Output Result
-            // If the summary is huge, send as a file. Otherwise, embed it.
             if (summary.length > 4096) {
                 const buffer = Buffer.from(summary, 'utf-8');
                 return interaction.editReply({ 
@@ -94,7 +91,7 @@ export default {
 
             const embed = new EmbedBuilder()
                 .setTitle(`📝 Storyline Summary: #${interaction.channel.name}`)
-                .setColor(0x00FF00) // Green
+                .setColor(0x00FF00)
                 .setDescription(summary)
                 .setFooter({ text: "Generated via OpenAI • Analyzed Content & Embeds" })
                 .setTimestamp();
@@ -103,7 +100,6 @@ export default {
 
         } catch (err) {
             console.error("Summarize Error:", err);
-            // Handle specific OpenAI errors (like Quota exceeded)
             if (err.status === 429) {
                 return interaction.editReply("❌ Error: OpenAI API Quota Exceeded. Check billing at platform.openai.com.");
             }
