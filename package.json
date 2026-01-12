@@ -10,6 +10,8 @@
   "dependencies": {
     "discord.js": "^14.16.3",
     "googleapis": "^144.0.0",
+    "google-spreadsheet": "^4.1.4",
+    "google-auth-library": "^9.14.2",
     "dotenv": "^16.4.5",
     "luxon": "^3.4.4",
     "node-cron": "^3.0.3"
@@ -18,3 +20,4 @@
     "node": "18.x"
   }
 }
+
