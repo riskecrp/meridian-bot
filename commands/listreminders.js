@@ -1,93 +1,80 @@
-import { SlashCommandBuilder } from "discord.js";
+import { SlashCommandBuilder, EmbedBuilder } from "discord.js";
 import { sheets, GOOGLE_SHEET_ID } from "../utils/googleClient.js";
-import { replyWithPaginatedEmbed } from "../utils/helpers.js";
 
 export default {
     data: new SlashCommandBuilder()
         .setName("listreminders")
-        .setDescription("Display active reminders that target you, your roles, or are public."),
+        .setDescription("Show active reminders (Matched by Username or Role Name)."),
 
     async execute(interaction) {
-        const username = interaction.user.username;
-        const userId = interaction.user.id;
-        
-        // Get all user's role names (lowercase for easier comparison)
-        const userRoleNames = interaction.member.roles.cache.map(r => r.name.toLowerCase());
+        await interaction.deferReply({ ephemeral: true });
 
         try {
+            // Fetch the full range based on the setreminder schema (Cols A to O)
             const res = await sheets.spreadsheets.values.get({
                 spreadsheetId: GOOGLE_SHEET_ID,
-                range: "Reminders!A:O"
+                range: "Reminders!A2:O999" 
             });
 
             const rows = res.data.values || [];
-            const reminders = [];
+            if (rows.length === 0) {
+                return interaction.editReply("📭 No active reminders found in the system.");
+            }
 
-            // Skip header (i=1)
-            for (let i = 1; i < rows.length; i++) {
-                const row = rows[i];
-                if (!row || row.length < 13) continue;
+            const myUsername = interaction.user.username;
+            // Get list of my Role Names (to match Target Value)
+            const myRoleNames = interaction.member.roles.cache.map(r => r.name);
 
-                // Parse Data
+            const myReminders = [];
+
+            // Schema Mapping from setreminder.js:
+            // 0:Text, 1:Time, 2:Date, ... 7:Creator, 10:TargetType, 11:TargetValue, 12:Status
+            rows.forEach((row, index) => {
                 const text = row[0];
-                const time = row[1];
-                const date = row[2];
-                const recurrence = row[3] || "none";
-                const creatorName = row[4];
-                const timezone = row[6] || "UTC";
-                const visibility = row[7] || "private";
-                const rowCreatorID = row[8];
-                const targetType = row[10];                 // "user" or "role"
-                const targetValue = row[11]?.toLowerCase(); // "johndoe" or "management"
+                const inputTime = row[1];
+                const inputDate = row[2];
+                const creator = row[7];       // Stored as Username
+                const targetType = row[10];   // "user" or "role"
+                const targetValue = row[11];  // Username or Role Name
                 const status = row[12];
 
-                // Skip completed/deleted/warned
-                if (status === "completed" || status === "deleted" || !text) continue;
+                // Only show active reminders
+                if (status !== "active") return;
 
-                // --- FILTER LOGIC ---
-                let isVisible = false;
+                // CHECK 1: Did I create it?
+                const isCreator = (creator === myUsername);
 
-                // 1. Did I create it?
-                if (rowCreatorID === userId) isVisible = true;
+                // CHECK 2: Is it for me? (User Name Match)
+                const isDirectTarget = (targetType === "user" && targetValue === myUsername);
 
-                // 2. Is it Public?
-                else if (visibility === "public") isVisible = true;
+                // CHECK 3: Is it for my Role? (Role Name Match)
+                const isRoleTarget = (targetType === "role" && myRoleNames.includes(targetValue));
 
-                // 3. Is it targeting ME? (User type)
-                else if (targetType === "user" && (targetValue === username.toLowerCase() || targetValue === userId)) isVisible = true;
+                if (isCreator || isDirectTarget || isRoleTarget) {
+                    let icon = "👤"; // Direct
+                    if (isRoleTarget) icon = "📢"; // Role
+                    if (isCreator && !isDirectTarget) icon = "📤"; // Outgoing
 
-                // 4. Is it targeting MY ROLE? (Role type)
-                else if (targetType === "role" && userRoleNames.includes(targetValue)) isVisible = true;
-
-                if (isVisible) {
-                    reminders.push({
-                        date, time, timezone, text, recurrence, creatorName, visibility, targetValue
-                    });
+                    // Display Input Date/Time (Human Readable)
+                    myReminders.push(`**${index + 2}.** ${icon} \`${inputDate} ${inputTime}\`: ${text}`);
                 }
-            }
-
-            if (reminders.length === 0) {
-                 return interaction.reply({ content: "No active reminders found for you.", ephemeral: true });
-            }
-
-            // Sort by Date (Approximate)
-            reminders.sort((a, b) => {
-                const dateA = new Date(`${a.date}T${a.time}`);
-                const dateB = new Date(`${b.date}T${b.time}`);
-                return dateA - dateB;
             });
 
-            const lines = reminders.map(r => {
-                const recur = r.recurrence !== "none" ? ` 🔄 ${r.recurrence}` : "";
-                const targetDisplay = r.visibility === "public" ? "Everyone" : r.targetValue;
-                return `**${r.date} @ ${r.time}** (${r.timezone})${recur}\n🎯 Target: ${targetDisplay}\n📝 ${r.text}\n_By ${r.creatorName}_`;
-            });
+            if (myReminders.length === 0) {
+                return interaction.editReply("✅ You have no active reminders.");
+            }
 
-            await replyWithPaginatedEmbed(interaction, lines, "⏰ YOUR ACTIVE REMINDERS");
+            const embed = new EmbedBuilder()
+                .setTitle(`⏰ Active Reminders`)
+                .setColor(0x0099FF)
+                .setDescription(myReminders.slice(0, 15).join("\n"))
+                .setFooter({ text: "Matches are based on Exact Username/Role Name." });
+
+            return interaction.editReply({ embeds: [embed] });
 
         } catch (err) {
-            console.error("LISTREMINDERS ERROR:", err);
-            return interaction.reply({ content: "There was an error accessing the Google Sheet.", ephemeral: true });
+            console.error("ListReminders Error:", err);
+            return interaction.editReply("❌ Error fetching reminders.");
         }
     }
 };
