@@ -270,12 +270,6 @@ const logSceneCmd = new SlashCommandBuilder()
     .setName("logscene")
     .setDescription("Log execution of a scene with updated metadata.")
     .addStringOption(o =>
-        o.setName("scene_name")
-            .setDescription("Name of the scene")
-            .setRequired(true)
-            .setAutocomplete(true)
-    )
-    .addStringOption(o =>
         o.setName("participants")
             .setDescription("Participant names (comma-separated)")
             .setRequired(true)
@@ -351,20 +345,6 @@ const setReminderCmd = new SlashCommandBuilder()
         o.setName("channel")
             .setDescription("Channel where reminder will be posted")
             .setRequired(true)
-    )
-    .addRoleOption(o =>
-        o.setName("notification_role")
-            .setDescription("Role to notify (optional - in addition to target)")
-            .setRequired(false)
-    )
-    .addStringOption(o =>
-        o.setName("target_type")
-            .setDescription("Who should receive the reminder ping")
-            .setRequired(true)
-            .addChoices(
-                { name: "User", value: "user" },
-                { name: "Role", value: "role" }
-            )
     )
     .addStringOption(o =>
         o.setName("target_value")
