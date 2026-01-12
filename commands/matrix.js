@@ -218,9 +218,9 @@ export default {
                     .setTitle(`📂 ${row[0]} - Tier ${row[2] || 0}`)
                     .setColor(0x2b2d31)
                     .addFields(
-                        { name: "➡️ Information", value: **Last Promoted:** ${row[3]\n`**Lead:** ${leadDisplay}\n**Team:** ${roleStatus}\n**Last Promoted:** ${row[3] || "N/A"}`, inline: true },
-                        { name: "➡️ Scenes Ran", value: `**30 Days:** ${monthCount}\n**All Time:** ${allTime}`, inline: false }\n,
-                        { name: "🔗 Quick Links", value: linkBlock, inline: false }\n,
+                        { name: "➡️ Information", value: `**Lead:** ${leadDisplay}\n**Team:** ${roleStatus}\n**Last Promoted:** ${row[3] || "N/A"}`, inline: true },
+                        { name: "➡️ Scenes Ran", value: `**30 Days:** ${monthCount}\n**All Time:** ${allTime}`, inline: false },
+                        { name: "🔗 Quick Links", value: linkBlock, inline: false },
                         { name: "🎁 Recent Rewards", value: rewards.length ? rewards.slice(0, 5).join("\n") : "_No rewards in last 30 days._", inline: false }
                     )
                     .setFooter({ text: "[ECRP] Faction Management System" });
