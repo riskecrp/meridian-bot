@@ -1,6 +1,6 @@
-const { SlashCommandBuilder, EmbedBuilder } = require('discord.js');
-const { GoogleSpreadsheet } = require('google-spreadsheet');
-const { JWT } = require('google-auth-library');
+import { SlashCommandBuilder, EmbedBuilder } from 'discord.js';
+import { GoogleSpreadsheet } from 'google-spreadsheet';
+import { JWT } from 'google-auth-library';
 
 // --- AUTHENTICATION & SETUP ---
 // Initialize Auth using Railway Environment Variables
@@ -16,7 +16,7 @@ async function getDoc() {
   return doc;
 }
 
-module.exports = {
+export default {
   data: new SlashCommandBuilder()
     .setName('matrix')
     .setDescription('Faction Management System')
@@ -53,7 +53,6 @@ module.exports = {
 
   async execute(interaction) {
     // --- PERMISSION CHECK ---
-    // Change this string to match your role name exactly
     const requiredRole = "[ECRP] Faction Management";
     if (!interaction.member.roles.cache.some(role => role.name === requiredRole)) {
       return interaction.reply({ content: `❌ Restricted to **${requiredRole}** only.`, ephemeral: true });
@@ -73,22 +72,19 @@ module.exports = {
 
       // --- LOGIC: CREATE ---
       if (subcommand === 'create') {
-        // Check Master List (Sheet1)
         const masterRows = await sheetMaster.getRows();
-        const existsInMaster = masterRows.some(row => row.get('Faction Name') === factionName); // Assumes Header "Faction Name" in A1
+        const existsInMaster = masterRows.some(row => row.get('Faction Name') === factionName);
         
         if (!existsInMaster) {
-          await sheetMaster.addRow({ 'Faction Name': factionName }); // Adjust header key as needed
+          await sheetMaster.addRow({ 'Faction Name': factionName });
         }
 
-        // Check Data Sheet
         const existingRow = rows.find(row => row.get('Faction Name') === factionName);
         if (existingRow) {
           return interaction.editReply(`❌ **${factionName}** already exists in the Matrix.`);
         }
 
-        // Add new row: Name, Lead, Tier, Date
-        const today = new Date().toLocaleDateString('en-GB'); // DD/MM/YYYY format
+        const today = new Date().toLocaleDateString('en-GB');
         await sheetData.addRow({
           'Faction Name': factionName,
           'Team Lead ID': 'None',
@@ -105,16 +101,16 @@ module.exports = {
         if (!row) return interaction.editReply(`❌ Could not find **${factionName}** in FactionData.`);
 
         const leadId = row.get('Team Lead ID');
-        const leadDisplay = leadId === 'None' ? 'None Assigned' : `<@${leadId}>`;
+        const leadDisplay = leadId === 'None' || !leadId ? 'None Assigned' : `<@${leadId}>`;
 
         const embed = new EmbedBuilder()
           .setTitle(`📂 Faction Matrix: ${factionName}`)
           .setColor(0x0099FF)
           .addFields(
-            { name: 'Faction Name', value: row.get('Faction Name'), inline: false },
+            { name: 'Faction Name', value: row.get('Faction Name') || 'N/A', inline: false },
             { name: 'Faction Team Lead', value: leadDisplay, inline: false },
-            { name: 'Current Tier', value: row.get('Current Tier'), inline: false },
-            { name: 'Last Promotion Date', value: row.get('Last Promotion Date'), inline: false }
+            { name: 'Current Tier', value: row.get('Current Tier') || '0', inline: false },
+            { name: 'Last Promotion Date', value: row.get('Last Promotion Date') || 'N/A', inline: false }
           )
           .setFooter({ text: '[ECRP] Faction Management System' });
 
@@ -128,7 +124,6 @@ module.exports = {
         
         if (!row) return interaction.editReply(`❌ Could not find **${factionName}**.`);
 
-        // Update values
         const today = new Date().toLocaleDateString('en-GB');
         row.assign({ 'Current Tier': String(tier), 'Last Promotion Date': today });
         await row.save();
