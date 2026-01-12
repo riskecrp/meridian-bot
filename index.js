@@ -17,7 +17,7 @@ const DISCORD_TOKEN = process.env.DISCORD_TOKEN;
 const CLIENT_ID = process.env.CLIENT_ID;
 const GUILD_ID = process.env.GUILD_ID;
 const GOOGLE_CLIENT_EMAIL = process.env.GOOGLE_CLIENT_EMAIL;
-// Handle Railway's newline formatting in private keys
+// Fix private key newlines for Railway
 const GOOGLE_PRIVATE_KEY = process.env.GOOGLE_PRIVATE_KEY?.replace(/\\n/g, "\n");
 const GOOGLE_SHEET_ID = process.env.GOOGLE_SHEET_ID;
 
@@ -58,13 +58,13 @@ const client = new Client({
 
 /**
  * Resolves a target (User or Role) into a mentionable string.
- * FIX: Checks if input already starts with '@' to prevent double symbols.
+ * FIX: Does NOT add an extra '@' if the search fails; trusts user input.
  */
 async function resolvePing(guild, type, value) {
-    if (!value) return "@Unknown";
+    if (!value) return "Unknown";
     
-    // 1. Clean the input for searching (remove @ temporarily)
-    const cleanValue = value.replace(/^@/, '').trim().toLowerCase();
+    // 1. Strip ALL leading @ symbols for the search (e.g. "@@aleks" -> "aleks")
+    const cleanValue = value.replace(/^@+/, '').trim().toLowerCase();
     
     try {
         if (type === "role") {
@@ -80,9 +80,9 @@ async function resolvePing(guild, type, value) {
         console.error("Ping Resolution Error:", e.message);
     }
 
-    // 2. Fallback: If not found, use user input. 
-    // If user typed "@aleks", return "@aleks". If "aleks", return "@aleks".
-    return value.startsWith('@') ? value : `@${value}`;
+    // 2. Fallback: Return exactly what the user typed.
+    // If user typed "@aleks", we return "@aleks". No double @.
+    return value;
 }
 
 /**
@@ -90,11 +90,9 @@ async function resolvePing(guild, type, value) {
  * FIX: Adds padding to time inputs (3:30 -> 03:30)
  */
 function convertToUTC(date, time, timezone) {
-    // Pad time just in case user inputs "3:30" instead of "03:30"
     const paddedTime = time.includes(":") && time.length < 5 ? time.padStart(5, "0") : time;
-    
-    // Attempt strict parsing first
     const dt = DateTime.fromFormat(`${date} ${paddedTime}`, "yyyy-MM-dd HH:mm", { zone: timezone });
+    
     if (!dt.isValid) return null;
     
     const utcDt = dt.toUTC();
@@ -162,7 +160,6 @@ client.once("ready", async () => {
         await rest.put(Routes.applicationGuildCommands(CLIENT_ID, GUILD_ID), { body: commands });
         console.log(`[SYSTEM] Meridian Bot Online (${client.user.tag})`);
         
-        // Start Cron Job
         cron.schedule("* * * * *", () => {
             console.log(`[CRON] Tick.`);
             checkReminders();
@@ -234,7 +231,7 @@ client.on("interactionCreate", async interaction => {
 });
 
 // ───────────────────────────────────────────────
-// 8. REMINDER ENGINE (SPAM FIXED)
+// 8. REMINDER ENGINE (SPAM FIXED & PING FIXED)
 // ───────────────────────────────────────────────
 async function checkReminders() {
     try {
@@ -307,7 +304,7 @@ async function checkReminders() {
                         allowedMentions: { parse: ['users', 'roles'] }
                     });
 
-                    // ─── FIX: MARK COMPLETED (Instead of deleting) ───
+                    // ─── SPAM FIX: MARK COMPLETED (Instead of deleting) ───
                     const recurrence = r[6]?.toLowerCase();
                     
                     if (recurrence === "none" || !recurrence) {
