@@ -10,12 +10,28 @@ function getTodayDate() {
     return `${day}/${month}/${year}`;
 }
 
-// --- HELPER: Parse Date for Stats ---
+// --- HELPER: Parse DD/MON/YYYY to Date Object ---
 function parseLogDate(dateStr) {
     if (!dateStr) return null;
+    
     const parts = dateStr.split('/');
-    if (parts.length !== 3) return null;
-    return new Date(parts[2], parts[1] - 1, parts[0]);
+    if (parts.length !== 3) return null; // Must be DD/MON/YYYY
+
+    const day = parseInt(parts[0], 10);
+    const monthStr = parts[1].toUpperCase();
+    const year = parseInt(parts[2], 10);
+
+    const monthMap = {
+        "JAN": 0, "FEB": 1, "MAR": 2, "APR": 3, "MAY": 4, "JUN": 5,
+        "JUL": 6, "AUG": 7, "SEP": 8, "OCT": 9, "NOV": 10, "DEC": 11
+    };
+
+    const monthIndex = monthMap[monthStr];
+
+    // If month is invalid or parse failed, return null
+    if (monthIndex === undefined || isNaN(day) || isNaN(year)) return null;
+
+    return new Date(year, monthIndex, day);
 }
 
 // --- HELPER: Get Faction Names ---
@@ -147,7 +163,7 @@ export default {
                 return interaction.editReply(`✅ **${factionName}** created.`);
             }
 
-            // --- VIEW FACTION (FIXED LAYOUT) ---
+            // --- VIEW FACTION (FIXED DATE PARSING) ---
             if (sub === "view") {
                 const rowNum = await findFactionRow("FactionData", factionName);
                 if (!rowNum) return interaction.editReply(`❌ Faction **${factionName}** not found.`);
@@ -183,6 +199,7 @@ export default {
                     if (lFaction === targetName) {
                         allTime++;
                         const lDate = parseLogDate(logRows[i][0]);
+                        // Only count if date is valid AND within 30 days
                         if (lDate && lDate >= thirtyDaysAgo) {
                             monthCount++;
                             if (logRows[i][2]) rewards.push(`• ${logRows[i][2]} (${logRows[i][0]})`);
@@ -191,11 +208,9 @@ export default {
                 }
 
                 // --- BUILD EXPLICIT LINKS ---
-                // Format: Label: [Link] OR ❌ Not Set
-                const feedbackStatus = row[4] ? `<1099035227705573427> <#${row[4]}>` : "❌ **Feedback:** Not Set";
-                const forumStatus = row[5] ? `[Forum Thread](${row[5]})` : "❌ **Forum:** Not Set";
-                const discordStatus = row[6] ? `[Discord](${row[6]})` : "❌ **Discord:** Not Set";
-
+                const feedbackStatus = row[4] ? `<:feedback:1099035227705573427> <#${row[4]}>` : "❌ **Feedback:** Not Set";
+                const forumStatus = row[5] ? `📄 [Forum Thread](${row[5]})` : "❌ **Forum:** Not Set";
+                const discordStatus = row[6] ? `💬 [Discord](${row[6]})` : "❌ **Discord:** Not Set";
                 const linkBlock = `${feedbackStatus}\n${forumStatus}\n${discordStatus}`;
 
                 // --- BUILD EMBED ---
@@ -203,13 +218,9 @@ export default {
                     .setTitle(`📂 ${row[0]} (Tier ${row[2] || 0})`)
                     .setColor(0x2b2d31)
                     .addFields(
-                        // Info Block
                         { name: "📋 Information", value: `**Lead:** ${leadDisplay}\n**Team:** ${roleStatus}\n**Promoted:** ${row[3] || "N/A"}`, inline: true },
-                        // Stats Block
                         { name: "📊 Statistics", value: `**30 Days:** ${monthCount}\n**All Time:** ${allTime}`, inline: true },
-                        // Links Block (Full Row)
                         { name: "🔗 Quick Links", value: linkBlock, inline: false },
-                        // Rewards
                         { name: "🎁 Recent Rewards", value: rewards.length ? rewards.slice(0, 5).join("\n") : "_No rewards in last 30 days._", inline: false }
                     )
                     .setFooter({ text: "[ECRP] Faction Management System" });
@@ -217,7 +228,7 @@ export default {
                 return interaction.editReply({ embeds: [embed] });
             }
 
-            // --- VIEW TEAM (FIXED CLICKABLE LINKS) ---
+            // --- VIEW TEAM ---
             if (sub === "viewteam") {
                 const leadUser = interaction.options.getUser("lead");
                 const res = await sheets.spreadsheets.values.get({ spreadsheetId: GOOGLE_SHEET_ID, range: "FactionData!A:G" });
@@ -233,15 +244,10 @@ export default {
                 teamFactions.forEach(r => {
                     const name = r[0];
                     const tier = r[2] || "0";
-                    
-                    // Build Clickable Links or ❌
-                    // row[4]=Thread, row[5]=Forum, row[6]=Discord
                     const feed = r[4] ? `<#${r[4]}>` : "❌";
                     const forum = r[5] ? `[Forum](${r[5]})` : "❌";
                     const disc = r[6] ? `[Discord](${r[6]})` : "❌";
-                    
                     const line = `Feed: ${feed} • ${forum} • ${disc}`;
-                    
                     embed.addFields({ name: `${name} (Tier ${tier})`, value: line, inline: false });
                 });
 
