@@ -6,7 +6,8 @@ import {
     SlashCommandBuilder,
     EmbedBuilder,
     PermissionFlagsBits,
-    AttachmentBuilder
+    AttachmentBuilder,
+    MessageFlags
 } from "discord.js";
 
 import { google } from "googleapis";
@@ -352,11 +353,6 @@ const setReminderCmd = new SlashCommandBuilder()
             .setDescription("Channel where reminder will be posted")
             .setRequired(true)
     )
-    .addRoleOption(o =>
-        o.setName("notification_role")
-            .setDescription("Role to notify (optional - in addition to target)")
-            .setRequired(false)
-    )
     .addStringOption(o =>
         o.setName("target_type")
             .setDescription("Who should receive the reminder ping")
@@ -370,6 +366,11 @@ const setReminderCmd = new SlashCommandBuilder()
         o.setName("target_value")
             .setDescription("Username (for user) or Role name (for role)")
             .setRequired(true)
+    )
+    .addRoleOption(o =>
+        o.setName("notification_role")
+            .setDescription("Role to notify (optional - in addition to target)")
+            .setRequired(false)
     )
     .addStringOption(o =>
         o.setName("recurrence")
@@ -502,7 +503,7 @@ const client = new Client({
     intents: [GatewayIntentBits.Guilds]
 });
 
-client.once("ready", () => {
+client.once("clientReady", () => {
     console.log(`Logged in as ${client.user.tag}`);
     client.user.setPresence({
         activities: [{ name: "Waiting for associate request...", type: 3 }],
@@ -838,12 +839,12 @@ client.on("interactionCreate", async interaction => {
         const hasManagement = memberRoles ? memberRoles.some(r => r.name === "Management") : false;
 
         if (!hasManagement) {
-            return interaction.reply({ content: "You do not have permission to run this command. (Requires Management role)", ephemeral: true });
+            return interaction.reply({ content: "You do not have permission to run this command. (Requires Management role)", flags: MessageFlags.Ephemeral });
         }
 
         // Defer reply so long-running sheet writes don't cause a Discord timeout
         try {
-            await interaction.deferReply({ ephemeral: true });
+            await interaction.deferReply({ flags: MessageFlags.Ephemeral });
         } catch (err) {
             // If deferring fails for whatever reason, continue but be aware the command may timeout.
             console.warn("Failed to defer reply:", err);
@@ -895,7 +896,7 @@ client.on("interactionCreate", async interaction => {
                 return interaction.editReply("There was an error updating the Google Sheet.");
             } catch (e) {
                 // Fallback if editReply fails
-                return interaction.followUp({ content: "There was an error updating the Google Sheet.", ephemeral: true });
+                return interaction.followUp({ content: "There was an error updating the Google Sheet.", flags: MessageFlags.Ephemeral });
             }
         }
     }
@@ -910,7 +911,7 @@ client.on("interactionCreate", async interaction => {
         const hasManagement = memberRoles ? memberRoles.some(r => r.name === "Management") : false;
 
         if (!hasManagement) {
-            return interaction.reply({ content: "You do not have permission to run this command. (Requires Management role)", ephemeral: true });
+            return interaction.reply({ content: "You do not have permission to run this command. (Requires Management role)", flags: MessageFlags.Ephemeral });
         }
 
         try {
@@ -1021,12 +1022,12 @@ client.on("interactionCreate", async interaction => {
         const hasManagement = memberRoles ? memberRoles.some(r => r.name === "Management") : false;
 
         if (!hasManagement) {
-            return interaction.reply({ content: "You do not have permission to run this command. (Requires Management role)", ephemeral: true });
+            return interaction.reply({ content: "You do not have permission to run this command. (Requires Management role)", flags: MessageFlags.Ephemeral });
         }
 
         // Defer reply to avoid timeouts
         try {
-            await interaction.deferReply({ ephemeral: true });
+            await interaction.deferReply({ flags: MessageFlags.Ephemeral });
         } catch (err) {
             console.warn("Failed to defer reply:", err);
         }
@@ -1039,7 +1040,7 @@ client.on("interactionCreate", async interaction => {
 
         // Only proceed if they expressly set confiscated to true
         if (!confiscatedFlag) {
-            return interaction.editReply({ content: "No action taken — 'confiscated' was not set to true.", ephemeral: true });
+            return interaction.editReply({ content: "No action taken — 'confiscated' was not set to true.", flags: MessageFlags.Ephemeral });
         }
 
         try {
@@ -1110,7 +1111,7 @@ client.on("interactionCreate", async interaction => {
             try {
                 return interaction.editReply("There was an error updating the Google Sheet.");
             } catch (e) {
-                return interaction.followUp({ content: "There was an error updating the Google Sheet.", ephemeral: true });
+                return interaction.followUp({ content: "There was an error updating the Google Sheet.", flags: MessageFlags.Ephemeral });
             }
         }
     }
@@ -1126,7 +1127,7 @@ client.on("interactionCreate", async interaction => {
         const hasManagement = memberRoles ? memberRoles.some(r => r.name === "Management") : false;
 
         if (!(hasTeamLead || hasManagement)) {
-            return interaction.reply({ content: "You do not have permission to run this command. (Requires Team Lead or Management role)", ephemeral: true });
+            return interaction.reply({ content: "You do not have permission to run this command. (Requires Team Lead or Management role)", flags: MessageFlags.Ephemeral });
         }
 
         const sub = interaction.options.getSubcommand();
@@ -1149,7 +1150,7 @@ client.on("interactionCreate", async interaction => {
                     }
                 });
 
-                return interaction.reply({ content: "✅ Person dossier recorded to Sheet1 (A-E).", ephemeral: true });
+                return interaction.reply({ content: "✅ Person dossier recorded to Sheet1 (A-E).", flags: MessageFlags.Ephemeral });
             }
 
             if (sub === "location") {
@@ -1167,10 +1168,10 @@ client.on("interactionCreate", async interaction => {
                     }
                 });
 
-                return interaction.reply({ content: "✅ Location dossier recorded to Sheet1 (F-H).", ephemeral: true });
+                return interaction.reply({ content: "✅ Location dossier recorded to Sheet1 (F-H).", flags: MessageFlags.Ephemeral });
             }
 
-            return interaction.reply({ content: "Unknown subcommand.", ephemeral: true });
+            return interaction.reply({ content: "Unknown subcommand.", flags: MessageFlags.Ephemeral });
 
         } catch (err) {
             console.error("ADDDOSSIER ERROR:", err);
@@ -1189,7 +1190,7 @@ client.on("interactionCreate", async interaction => {
         if (!hasRequiredRole(interaction, ["Team Leader", "Management", "Team Guide"])) {
             return interaction.reply({ 
                 content: "You do not have permission to run this command. (Requires Team Leader, Management, or Team Guide role)", 
-                ephemeral: true 
+                flags: MessageFlags.Ephemeral 
             });
         }
 
@@ -1197,7 +1198,7 @@ client.on("interactionCreate", async interaction => {
         const participants = interaction.options.getString("participants");
 
         try {
-            await interaction.deferReply({ ephemeral: true });
+            await interaction.deferReply({ flags: MessageFlags.Ephemeral });
 
             // Ensure the tab exists with updated headers
             await ensureSheetTab("One Off Scenes", [
@@ -1268,7 +1269,7 @@ client.on("interactionCreate", async interaction => {
             try {
                 return interaction.editReply({ content: "There was an error updating the Google Sheet." });
             } catch (e) {
-                return interaction.followUp({ content: "There was an error updating the Google Sheet.", ephemeral: true });
+                return interaction.followUp({ content: "There was an error updating the Google Sheet.", flags: MessageFlags.Ephemeral });
             }
         }
     }
@@ -1389,7 +1390,7 @@ client.on("interactionCreate", async interaction => {
             console.error("SCENECOUNT ERROR:", err);
             return interaction.reply({ 
                 content: "There was an error accessing the Google Sheet.", 
-                ephemeral: true 
+                flags: MessageFlags.Ephemeral 
             });
         }
     }
@@ -1405,7 +1406,7 @@ client.on("interactionCreate", async interaction => {
         if (!hasRequiredRole(interaction, ["Team Leader", "Management", "Team Guide"])) {
             return interaction.reply({ 
                 content: "You do not have permission to run this command. (Requires Team Leader, Management, or Team Guide role)", 
-                ephemeral: true 
+                flags: MessageFlags.Ephemeral 
             });
         }
 
@@ -1415,7 +1416,7 @@ client.on("interactionCreate", async interaction => {
         const createdOn = new Date().toISOString().slice(0, 10); // YYYY-MM-DD
 
         try {
-            await interaction.deferReply({ ephemeral: true });
+            await interaction.deferReply({ flags: MessageFlags.Ephemeral });
 
             // Ensure the tab exists
             await ensureSheetTab("Notable Interactions", ["Faction", "Note", "Created By", "Created On"]);
@@ -1438,7 +1439,7 @@ client.on("interactionCreate", async interaction => {
             try {
                 return interaction.editReply({ content: "There was an error updating the Google Sheet." });
             } catch (e) {
-                return interaction.followUp({ content: "There was an error updating the Google Sheet.", ephemeral: true });
+                return interaction.followUp({ content: "There was an error updating the Google Sheet.", flags: MessageFlags.Ephemeral });
             }
         }
     }
@@ -1570,7 +1571,7 @@ client.on("interactionCreate", async interaction => {
         if (!hasRoleById(interaction, FACTION_MANAGEMENT_ROLE_ID)) {
             return interaction.reply({ 
                 content: "You do not have permission to run this command. (Requires [ECRP] Faction Management role)", 
-                ephemeral: true 
+                flags: MessageFlags.Ephemeral 
             });
         }
 
@@ -1599,7 +1600,7 @@ client.on("interactionCreate", async interaction => {
         const notificationRoleName = notificationRole ? notificationRole.name : "";
 
         try {
-            await interaction.deferReply({ ephemeral: true });
+            await interaction.deferReply({ flags: MessageFlags.Ephemeral });
 
             // Validate time format (HH:MM)
             const timeRegex = /^([01]\d|2[0-3]):([0-5]\d)$/;
@@ -1663,7 +1664,7 @@ client.on("interactionCreate", async interaction => {
             try {
                 return interaction.editReply({ content: "There was an error updating the Google Sheet." });
             } catch (e) {
-                return interaction.followUp({ content: "There was an error updating the Google Sheet.", ephemeral: true });
+                return interaction.followUp({ content: "There was an error updating the Google Sheet.", flags: MessageFlags.Ephemeral });
             }
         }
     }
@@ -1675,7 +1676,7 @@ client.on("interactionCreate", async interaction => {
         if (!hasRoleById(interaction, FACTION_MANAGEMENT_ROLE_ID)) {
             return interaction.reply({ 
                 content: "You do not have permission to run this command. (Requires [ECRP] Faction Management role)", 
-                ephemeral: true 
+                flags: MessageFlags.Ephemeral 
             });
         }
 
@@ -1705,7 +1706,7 @@ client.on("interactionCreate", async interaction => {
                     )
                     .addFields({ name: "⠀", value: "_No reminders found._" });
 
-                return interaction.reply({ embeds: [embedEmpty], ephemeral: true });
+                return interaction.reply({ embeds: [embedEmpty], flags: MessageFlags.Ephemeral });
             }
 
             // Get reminders - now includes UTC columns, status, channel, and notification role
@@ -1789,7 +1790,7 @@ client.on("interactionCreate", async interaction => {
                     )
                     .addFields({ name: "⠀", value: "_No reminders found._" });
 
-                return interaction.reply({ embeds: [embedEmpty], ephemeral: true });
+                return interaction.reply({ embeds: [embedEmpty], flags: MessageFlags.Ephemeral });
             }
 
             // Build reminder lines with target, channel, and notification role information
@@ -1815,13 +1816,13 @@ client.on("interactionCreate", async interaction => {
                 )
                 .addFields(fields);
 
-            return interaction.reply({ embeds: [embed], ephemeral: true });
+            return interaction.reply({ embeds: [embed], flags: MessageFlags.Ephemeral });
 
         } catch (err) {
             console.error("LISTREMINDERS ERROR:", err);
             return interaction.reply({ 
                 content: "There was an error accessing the Google Sheet.", 
-                ephemeral: true 
+                flags: MessageFlags.Ephemeral 
             });
         }
     }
@@ -1917,7 +1918,7 @@ client.on("interactionCreate", async interaction => {
             )
             .setFooter({ text: "Need assistance? Contact a Team Leader or Management member." });
 
-        return interaction.reply({ embeds: [embed], ephemeral: true });
+        return interaction.reply({ embeds: [embed], flags: MessageFlags.Ephemeral });
     }
 });
 
