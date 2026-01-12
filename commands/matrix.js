@@ -208,7 +208,7 @@ export default {
                 }
 
                 // --- BUILD EXPLICIT LINKS ---
-                const feedbackStatus = row[4] ? `Scene Feedback: <1099035227705573427> <#${row[4]}>` : "❌ **Feedback:** Not Set";
+                const feedbackStatus = row[4] ? `Scene Feedback: <#${row[4]}>` : "❌ **Feedback:** Not Set";
                 const forumStatus = row[5] ? `[Forum Thread](${row[5]})` : "❌ **Forum:** Not Set";
                 const discordStatus = row[6] ? `[Discord](${row[6]})` : "❌ **Discord:** Not Set";
                 const linkBlock = `${feedbackStatus}\n${forumStatus}\n${discordStatus}`;
@@ -218,9 +218,9 @@ export default {
                     .setTitle(`📂 ${row[0]} - Tier ${row[2] || 0}`)
                     .setColor(0x2b2d31)
                     .addFields(
-                        { name: "Information", value: `**Lead:** ${leadDisplay}\n**Team:** ${roleStatus}\n**Promoted:** ${row[3] || "N/A"}`, inline: true },
-                        { name: "Scenes Ran", value: `**30 Days:** ${monthCount}\n**All Time:** ${allTime}`, inline: false },
-                        { name: "🔗 Quick Links", value: linkBlock, inline: false },
+                        { name: "➡️ Information", value: **Last Promoted:** ${row[3]\n`**Lead:** ${leadDisplay}\n**Team:** ${roleStatus}\n**Last Promoted:** ${row[3] || "N/A"}`, inline: true },
+                        { name: "➡️ Scenes Ran", value: `**30 Days:** ${monthCount}\n**All Time:** ${allTime}`, inline: false }\n,
+                        { name: "🔗 Quick Links", value: linkBlock, inline: false }\n,
                         { name: "🎁 Recent Rewards", value: rewards.length ? rewards.slice(0, 5).join("\n") : "_No rewards in last 30 days._", inline: false }
                     )
                     .setFooter({ text: "[ECRP] Faction Management System" });
