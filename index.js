@@ -1104,7 +1104,7 @@ client.on("interactionCreate", async interaction => {
             }
 
             if (sceneRow === -1) {
-                return interaction.editReply({ content: `❌ Scene "${sceneName}" not found in the database.` });
+                return interaction.editReply({ content: `❌ Scene "${sceneName}" not found in the database. Please contact a Team Leader or Management member to add new scenes.` });
             }
 
             const currentData = rows[sceneRow - 1];
@@ -1574,12 +1574,8 @@ client.on("interactionCreate", async interaction => {
                 const targetValue = row[9] || "";
 
                 // Check if user matches target
-                let isTargeted = false;
-                if (targetType === "user" && targetValue.toLowerCase() === username.toLowerCase()) {
-                    isTargeted = true;
-                } else if (targetType === "role" && userRoleNames.some(r => r.toLowerCase() === targetValue.toLowerCase())) {
-                    isTargeted = true;
-                }
+                const isTargeted = (targetType === "user" && targetValue.toLowerCase() === username.toLowerCase()) ||
+                                   (targetType === "role" && userRoleNames.some(r => r.toLowerCase() === targetValue.toLowerCase()));
 
                 // Visibility rules (original logic)
                 const isCreator = creator === username;
