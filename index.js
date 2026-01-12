@@ -19,6 +19,9 @@ const GOOGLE_CLIENT_EMAIL = process.env.GOOGLE_CLIENT_EMAIL;
 const GOOGLE_PRIVATE_KEY = process.env.GOOGLE_PRIVATE_KEY.replace(/\\n/g, "\n");
 const GOOGLE_SHEET_ID = process.env.GOOGLE_SHEET_ID;
 
+// ROLE IDS
+const FACTION_MANAGEMENT_ROLE_ID = "1457229857749729363";
+
 // GOOGLE AUTH
 const auth = new google.auth.JWT(
     GOOGLE_CLIENT_EMAIL,
@@ -1457,7 +1460,7 @@ client.on("interactionCreate", async interaction => {
     // /setreminder ([ECRP] Faction Management only)
     // ────────────────
     if (interaction.commandName === "setreminder") {
-        if (!hasRoleById(interaction, "1457229857749729363")) {
+        if (!hasRoleById(interaction, FACTION_MANAGEMENT_ROLE_ID)) {
             return interaction.reply({ 
                 content: "You do not have permission to run this command. (Requires [ECRP] Faction Management role)", 
                 ephemeral: true 
@@ -1475,7 +1478,7 @@ client.on("interactionCreate", async interaction => {
         const creator = interaction.user.username;
         // Get the [ECRP] Faction Management role name if user has it
         const memberRoles = interaction.member?.roles?.cache;
-        const factionMgmtRole = memberRoles?.find(r => r.id === "1457229857749729363");
+        const factionMgmtRole = memberRoles?.find(r => r.id === FACTION_MANAGEMENT_ROLE_ID);
         const creatorRole = factionMgmtRole ? factionMgmtRole.name : "Unknown";
 
         try {
@@ -1532,7 +1535,7 @@ client.on("interactionCreate", async interaction => {
     // /listreminders ([ECRP] Faction Management only)
     // ────────────────
     if (interaction.commandName === "listreminders") {
-        if (!hasRoleById(interaction, "1457229857749729363")) {
+        if (!hasRoleById(interaction, FACTION_MANAGEMENT_ROLE_ID)) {
             return interaction.reply({ 
                 content: "You do not have permission to run this command. (Requires [ECRP] Faction Management role)", 
                 ephemeral: true 
@@ -1541,7 +1544,7 @@ client.on("interactionCreate", async interaction => {
 
         const username = interaction.user.username;
         const memberRoles = interaction.member?.roles?.cache;
-        const factionMgmtRole = memberRoles?.find(r => r.id === "1457229857749729363");
+        const factionMgmtRole = memberRoles?.find(r => r.id === FACTION_MANAGEMENT_ROLE_ID);
         const userRole = factionMgmtRole ? factionMgmtRole.name : null;
         
         // Get all user's roles
