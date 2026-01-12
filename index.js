@@ -10,6 +10,8 @@ import {
 } from "discord.js";
 
 import { google } from "googleapis";
+import { DateTime } from "luxon";
+import cron from "node-cron";
 
 // ENV VARS (MUST MATCH RAILWAY)
 const DISCORD_TOKEN = process.env.DISCORD_TOKEN;
@@ -31,6 +33,69 @@ const auth = new google.auth.JWT(
 );
 
 const sheets = google.sheets({ version: "v4", auth });
+
+// ───────────────────────────────────────────────
+// TIMEZONE UTILITIES
+// ───────────────────────────────────────────────
+
+// Validate if a timezone string is valid
+function isValidTimezone(tz) {
+    try {
+        DateTime.now().setZone(tz);
+        return DateTime.local().setZone(tz).isValid;
+    } catch {
+        return false;
+    }
+}
+
+// Convert a date-time string from a specific timezone to UTC
+// Returns an object with { utcDate: "YYYY-MM-DD", utcTime: "HH:MM", utcTimestamp: number }
+function convertToUTC(date, time, timezone) {
+    try {
+        // Parse the input date and time in the specified timezone
+        const dt = DateTime.fromFormat(`${date} ${time}`, "yyyy-MM-dd HH:mm", { zone: timezone });
+        
+        if (!dt.isValid) {
+            return null;
+        }
+        
+        // Convert to UTC
+        const utcDt = dt.toUTC();
+        
+        return {
+            utcDate: utcDt.toFormat("yyyy-MM-dd"),
+            utcTime: utcDt.toFormat("HH:mm"),
+            utcTimestamp: utcDt.toMillis(),
+            originalTimezone: timezone
+        };
+    } catch (err) {
+        console.error("Error converting to UTC:", err);
+        return null;
+    }
+}
+
+// Convert UTC date-time to a specific timezone for display
+// Returns a formatted string
+function convertFromUTC(utcDate, utcTime, targetTimezone) {
+    try {
+        const dt = DateTime.fromFormat(`${utcDate} ${utcTime}`, "yyyy-MM-dd HH:mm", { zone: "UTC" });
+        
+        if (!dt.isValid) {
+            return null;
+        }
+        
+        const localDt = dt.setZone(targetTimezone);
+        
+        return {
+            date: localDt.toFormat("yyyy-MM-dd"),
+            time: localDt.toFormat("HH:mm"),
+            displayString: localDt.toFormat("yyyy-MM-dd HH:mm ZZZZ")
+        };
+    } catch (err) {
+        console.error("Error converting from UTC:", err);
+        return null;
+    }
+}
 
 // ───────────────────────────────────────────────
 // SLASH COMMANDS
@@ -1501,24 +1566,42 @@ client.on("interactionCreate", async interaction => {
                 return interaction.editReply({ content: "❌ Invalid date. Please provide a valid date." });
             }
 
-            // Ensure the tab exists with updated headers including target fields
+            // Validate timezone
+            if (!isValidTimezone(timezone)) {
+                return interaction.editReply({ content: "❌ Invalid timezone. Please use a valid IANA timezone (e.g., America/New_York, Europe/London, UTC)." });
+            }
+
+            // Convert to UTC for storage
+            const utcConversion = convertToUTC(date, time, timezone);
+            if (!utcConversion) {
+                return interaction.editReply({ content: "❌ Error converting time to UTC. Please check your date/time values." });
+            }
+
+            // Ensure the tab exists with updated headers including UTC columns
             await ensureSheetTab("Reminders", [
-                "Reminder Text", "Time", "Date", "Recurrence", "Creator", "Creator Role", "Timezone", "Visibility", "Target Type", "Target Value"
+                "Reminder Text", "Input Time", "Input Date", "Input Timezone", "UTC Time", "UTC Date", "Recurrence", "Creator", "Creator Role", "Visibility", "Target Type", "Target Value", "Status"
             ]);
 
-            // Add the reminder with target information
+            // Add the reminder with UTC conversion and target information
+            // Status: "active" for new reminders
             const nextRow = await findNextRowInTab("Reminders", "A");
             await sheets.spreadsheets.values.update({
                 spreadsheetId: GOOGLE_SHEET_ID,
-                range: `Reminders!A${nextRow}:J${nextRow}`,
+                range: `Reminders!A${nextRow}:M${nextRow}`,
                 valueInputOption: "USER_ENTERED",
                 requestBody: {
-                    values: [[text, time, date, recurrence, creator, creatorRole, timezone, visibility, targetType, targetValue]]
+                    values: [[text, time, date, timezone, utcConversion.utcTime, utcConversion.utcDate, recurrence, creator, creatorRole, visibility, targetType, targetValue, "active"]]
                 }
             });
 
             return interaction.editReply({ 
-                content: `✅ Reminder set for ${date} at ${time} (${timezone}).\nTarget: ${targetType} - ${targetValue}\nVisibility: ${visibility}\n\n⏰ Pings will be sent 30 minutes before and at the event time.` 
+                content: `✅ Reminder set!\n\n` +
+                         `**Your Time:** ${date} at ${time} (${timezone})\n` +
+                         `**UTC Time:** ${utcConversion.utcDate} at ${utcConversion.utcTime}\n` +
+                         `**Target:** ${targetType} - ${targetValue}\n` +
+                         `**Visibility:** ${visibility}\n` +
+                         `**Recurrence:** ${recurrence}\n\n` +
+                         `⏰ Pings will be sent 30 minutes before and at the event time.` 
             });
 
         } catch (err) {
@@ -1571,10 +1654,10 @@ client.on("interactionCreate", async interaction => {
                 return interaction.reply({ embeds: [embedEmpty], ephemeral: true });
             }
 
-            // Get reminders - now includes target columns (I and J)
+            // Get reminders - now includes UTC columns and status
             const res = await sheets.spreadsheets.values.get({
                 spreadsheetId: GOOGLE_SHEET_ID,
-                range: "Reminders!A:J"
+                range: "Reminders!A:M"
             });
 
             const rows = res.data.values || [];
@@ -1584,15 +1667,23 @@ client.on("interactionCreate", async interaction => {
             for (let i = 1; i < rows.length; i++) {
                 const row = rows[i];
                 const reminderText = row[0] || "N/A";
-                const time = row[1] || "N/A";
-                const date = row[2] || "N/A";
-                const recurrence = row[3] || "none";
-                const creator = row[4] || "Unknown";
-                const creatorRole = row[5] || "Unknown";
-                const timezone = row[6] || "UTC";
-                const visibility = row[7] || "private";
-                const targetType = row[8] || "user"; // Default to user for backwards compatibility
-                const targetValue = row[9] || "";
+                const inputTime = row[1] || "N/A";
+                const inputDate = row[2] || "N/A";
+                const inputTimezone = row[3] || "UTC";
+                const utcTime = row[4] || inputTime; // Fallback for backwards compatibility
+                const utcDate = row[5] || inputDate; // Fallback for backwards compatibility
+                const recurrence = row[6] || "none";
+                const creator = row[7] || "Unknown";
+                const creatorRole = row[8] || "Unknown";
+                const visibility = row[9] || "private";
+                const targetType = row[10] || "user"; // Default to user for backwards compatibility
+                const targetValue = row[11] || "";
+                const status = row[12] || "active"; // Default to active
+
+                // Skip completed reminders (unless they're recurring)
+                if (status === "completed" && recurrence === "none") {
+                    continue;
+                }
 
                 // Check if user matches target
                 const isTargeted = (targetType === "user" && targetValue.toLowerCase() === username.toLowerCase()) ||
@@ -1607,16 +1698,22 @@ client.on("interactionCreate", async interaction => {
 
                 // Show reminder if user is targeted OR visibility rules allow
                 if (isTargeted || isPublic || isRoleVisible || isPrivateVisible) {
+                    // Convert UTC time to user's local timezone (use input timezone as preference)
+                    const displayTime = convertFromUTC(utcDate, utcTime, inputTimezone);
+                    
                     reminders.push({
                         text: reminderText,
-                        time,
-                        date,
+                        displayDate: displayTime ? displayTime.date : inputDate,
+                        displayTime: displayTime ? displayTime.time : inputTime,
+                        timezone: inputTimezone,
+                        utcDate,
+                        utcTime,
                         recurrence,
                         creator,
-                        timezone,
                         visibility,
                         targetType,
-                        targetValue
+                        targetValue,
+                        status
                     });
                 }
             }
@@ -1637,8 +1734,9 @@ client.on("interactionCreate", async interaction => {
             // Build reminder lines with target information
             const lines = reminders.map(r => {
                 const recurrenceText = r.recurrence !== "none" ? ` (${r.recurrence})` : "";
+                const statusText = r.status === "completed" ? " [COMPLETED]" : "";
                 const targetInfo = r.targetType && r.targetValue ? `\n🎯 Target: ${r.targetType} - ${r.targetValue}` : "";
-                return `**${r.date}** at ${r.time} ${r.timezone}${recurrenceText}\n${r.text}${targetInfo}\n_Created by: ${r.creator} | Visibility: ${r.visibility}_`;
+                return `**${r.displayDate}** at ${r.displayTime} (${r.timezone})${recurrenceText}${statusText}\n${r.text}${targetInfo}\n_UTC: ${r.utcDate} ${r.utcTime} | Created by: ${r.creator} | Visibility: ${r.visibility}_`;
             });
 
             // Chunk into fields
@@ -1755,6 +1853,188 @@ client.on("interactionCreate", async interaction => {
 
         return interaction.reply({ embeds: [embed], ephemeral: true });
     }
+});
+
+// ───────────────────────────────────────────────
+// REMINDER NOTIFICATION SYSTEM
+// ───────────────────────────────────────────────
+
+// Track which reminders have been notified (to prevent duplicate pings)
+const notifiedReminders = new Set();
+
+// Helper to resolve target mentions
+async function resolveTargetMention(guild, targetType, targetValue) {
+    try {
+        if (targetType === "user") {
+            // Try to find user by username
+            const members = await guild.members.fetch();
+            const member = members.find(m => m.user.username.toLowerCase() === targetValue.toLowerCase());
+            return member ? `<@${member.id}>` : `@${targetValue}`;
+        } else if (targetType === "role") {
+            // Try to find role by name
+            const role = guild.roles.cache.find(r => r.name.toLowerCase() === targetValue.toLowerCase());
+            return role ? `<@&${role.id}>` : `@${targetValue}`;
+        }
+    } catch (err) {
+        console.error("Error resolving target mention:", err);
+    }
+    return `@${targetValue}`;
+}
+
+// Helper to get the reminder notification channel (uses first available text channel)
+async function getNotificationChannel(client) {
+    try {
+        const guild = await client.guilds.fetch(GUILD_ID);
+        const channels = await guild.channels.fetch();
+        
+        // Find first text channel the bot can send messages to
+        const textChannel = channels.find(ch => 
+            ch.isTextBased() && 
+            !ch.isVoiceBased() && 
+            ch.permissionsFor(guild.members.me).has(PermissionFlagsBits.SendMessages)
+        );
+        
+        return textChannel;
+    } catch (err) {
+        console.error("Error getting notification channel:", err);
+        return null;
+    }
+}
+
+// Check reminders and send notifications
+async function checkReminders() {
+    try {
+        // Get all active reminders
+        const res = await sheets.spreadsheets.values.get({
+            spreadsheetId: GOOGLE_SHEET_ID,
+            range: "Reminders!A:M"
+        });
+
+        const rows = res.data.values || [];
+        if (rows.length <= 1) return; // No reminders (only header)
+
+        const now = DateTime.now().setZone("UTC");
+        const nowTimestamp = now.toMillis();
+
+        for (let i = 1; i < rows.length; i++) {
+            const row = rows[i];
+            const reminderText = row[0] || "";
+            const utcTime = row[4];
+            const utcDate = row[5];
+            const recurrence = row[6] || "none";
+            const targetType = row[10] || "user";
+            const targetValue = row[11] || "";
+            const status = row[12] || "active";
+
+            // Skip inactive or completed non-recurring reminders
+            if (status !== "active") continue;
+            if (!utcDate || !utcTime) continue;
+
+            // Parse the UTC datetime
+            const reminderDt = DateTime.fromFormat(`${utcDate} ${utcTime}`, "yyyy-MM-dd HH:mm", { zone: "UTC" });
+            if (!reminderDt.isValid) continue;
+
+            const reminderTimestamp = reminderDt.toMillis();
+            const thirtyMinsBefore = reminderTimestamp - (30 * 60 * 1000);
+
+            // Create unique key for this reminder instance
+            const reminderKey = `${i}_${utcDate}_${utcTime}`;
+            const thirtyMinsKey = `${reminderKey}_30mins`;
+
+            // Check if it's time to send notification
+            const shouldNotifyNow = nowTimestamp >= reminderTimestamp && nowTimestamp < reminderTimestamp + (5 * 60 * 1000);
+            const shouldNotify30Mins = nowTimestamp >= thirtyMinsBefore && nowTimestamp < thirtyMinsBefore + (5 * 60 * 1000);
+
+            // Get notification channel
+            const channel = await getNotificationChannel(client);
+            if (!channel) {
+                console.error("No notification channel available");
+                continue;
+            }
+
+            const guild = await client.guilds.fetch(GUILD_ID);
+            const mention = await resolveTargetMention(guild, targetType, targetValue);
+
+            // Send 30-minute warning
+            if (shouldNotify30Mins && !notifiedReminders.has(thirtyMinsKey)) {
+                const embed = new EmbedBuilder()
+                    .setColor(0xffa500)
+                    .setTitle("⏰ Reminder - 30 Minutes")
+                    .setDescription(`${mention}\n\n${reminderText}`)
+                    .setFooter({ text: `Scheduled for ${reminderDt.toFormat("yyyy-MM-dd HH:mm")} UTC` });
+
+                await channel.send({ embeds: [embed] });
+                notifiedReminders.add(thirtyMinsKey);
+                console.log(`Sent 30-min warning for reminder: ${reminderText}`);
+            }
+
+            // Send main notification
+            if (shouldNotifyNow && !notifiedReminders.has(reminderKey)) {
+                const embed = new EmbedBuilder()
+                    .setColor(0xff0000)
+                    .setTitle("🔔 Reminder - NOW")
+                    .setDescription(`${mention}\n\n${reminderText}`)
+                    .setFooter({ text: `Scheduled for ${reminderDt.toFormat("yyyy-MM-dd HH:mm")} UTC` });
+
+                await channel.send({ embeds: [embed] });
+                notifiedReminders.add(reminderKey);
+                console.log(`Sent notification for reminder: ${reminderText}`);
+
+                // Handle recurrence or mark as completed
+                if (recurrence === "none") {
+                    // Mark as completed
+                    await sheets.spreadsheets.values.update({
+                        spreadsheetId: GOOGLE_SHEET_ID,
+                        range: `Reminders!M${i + 1}`,
+                        valueInputOption: "USER_ENTERED",
+                        requestBody: {
+                            values: [["completed"]]
+                        }
+                    });
+                } else {
+                    // Calculate next occurrence
+                    let nextDt = reminderDt;
+                    if (recurrence === "daily") {
+                        nextDt = reminderDt.plus({ days: 1 });
+                    } else if (recurrence === "weekly") {
+                        nextDt = reminderDt.plus({ weeks: 1 });
+                    } else if (recurrence === "monthly") {
+                        nextDt = reminderDt.plus({ months: 1 });
+                    }
+
+                    // Update the UTC date for next occurrence
+                    await sheets.spreadsheets.values.update({
+                        spreadsheetId: GOOGLE_SHEET_ID,
+                        range: `Reminders!F${i + 1}`,
+                        valueInputOption: "USER_ENTERED",
+                        requestBody: {
+                            values: [[nextDt.toFormat("yyyy-MM-dd")]]
+                        }
+                    });
+
+                    console.log(`Updated recurring reminder to next occurrence: ${nextDt.toFormat("yyyy-MM-dd")}`);
+                }
+            }
+        }
+
+        // Clean up old notification keys (older than 24 hours)
+        const oneDayAgo = nowTimestamp - (24 * 60 * 60 * 1000);
+        for (const key of notifiedReminders) {
+            // Simple cleanup - clear the set if it gets too large
+            if (notifiedReminders.size > 1000) {
+                notifiedReminders.clear();
+                break;
+            }
+        }
+
+    } catch (err) {
+        console.error("Error checking reminders:", err);
+    }
+}
+
+// Schedule reminder checks every minute
+cron.schedule('* * * * *', () => {
+    checkReminders();
 });
 
 // ───────────────────────────────────────────────
