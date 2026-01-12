@@ -2019,17 +2019,18 @@ async function checkReminders() {
                         nextDt = reminderDt.plus({ months: 1 });
                     }
 
-                    // Update the UTC date for next occurrence
+                    // Update both UTC date and time for next occurrence
+                    // Need to update columns E (UTC Time) and F (UTC Date)
                     await sheets.spreadsheets.values.update({
                         spreadsheetId: GOOGLE_SHEET_ID,
-                        range: `Reminders!F${i + 1}`,
+                        range: `Reminders!E${i + 1}:F${i + 1}`,
                         valueInputOption: "USER_ENTERED",
                         requestBody: {
-                            values: [[nextDt.toFormat("yyyy-MM-dd")]]
+                            values: [[nextDt.toFormat("HH:mm"), nextDt.toFormat("yyyy-MM-dd")]]
                         }
                     });
 
-                    console.log(`Updated recurring reminder to next occurrence: ${nextDt.toFormat("yyyy-MM-dd")}`);
+                    console.log(`Updated recurring reminder to next occurrence: ${nextDt.toFormat("yyyy-MM-dd HH:mm")} UTC`);
                 }
             }
         }
@@ -2050,7 +2051,7 @@ async function checkReminders() {
                 .sort((a, b) => a[1] - b[1]); // Sort by timestamp
             
             // Keep only the most recent half
-            const toKeep = entries.slice(entries.length / 2);
+            const toKeep = entries.slice(Math.floor(entries.length / 2));
             notifiedReminders.clear();
             toKeep.forEach(([key, timestamp]) => notifiedReminders.set(key, timestamp));
             
