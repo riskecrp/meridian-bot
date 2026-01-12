@@ -1,0 +1,193 @@
+import { SlashCommandBuilder, EmbedBuilder, ModalBuilder, TextInputBuilder, TextInputStyle, ActionRowBuilder } from "discord.js";
+import { sheets, GOOGLE_SHEET_ID } from "../utils/googleClient.js";
+
+// --- HELPER: Fetch Faction Names for Autocomplete ---
+async function getFactionNames() {
+    try {
+        const res = await sheets.spreadsheets.values.get({
+            spreadsheetId: GOOGLE_SHEET_ID,
+            range: "FactionData!A2:A999"
+        });
+        return (res.data.values || []).flat().map(f => f.trim()).filter(f => f);
+    } catch (err) {
+        console.error("Error fetching names:", err);
+        return [];
+    }
+}
+
+// --- HELPER: Double Lookup (Matrix -> Lead -> Staff Role) ---
+async function getFactionRouting(factionName) {
+    try {
+        // STEP 1: Look up Faction in Matrix (FactionData)
+        const matrixRes = await sheets.spreadsheets.values.get({
+            spreadsheetId: GOOGLE_SHEET_ID,
+            range: "FactionData!A:E" // A=Name, B=LeadID, E=ThreadID
+        });
+        
+        const matrixRows = matrixRes.data.values || [];
+        const factionRow = matrixRows.find(r => r[0]?.toLowerCase().trim() === factionName.toLowerCase().trim());
+        
+        if (!factionRow) return { error: `Faction **${factionName}** not found in FactionData.` };
+
+        const leadId = factionRow[1];      // Column B (Team Lead ID)
+        const threadId = factionRow[4];    // Column E (Thread ID)
+
+        if (!threadId) return { error: `No **Thread ID** found in Column E for **${factionName}**.` };
+
+        // STEP 2: Look up Role in Roster (StaffRoster) using Lead ID
+        let roleId = null;
+        let teamName = "Unknown Team";
+
+        // Only search roster if a valid Lead ID exists
+        if (leadId && leadId !== "None" && /^\d+$/.test(leadId)) {
+            const rosterRes = await sheets.spreadsheets.values.get({
+                spreadsheetId: GOOGLE_SHEET_ID,
+                range: "StaffRoster!A:C" // A=User ID, B=Role ID, C=Name (Optional)
+            });
+            
+            const rosterRows = rosterRes.data.values || [];
+            // Find row where Column A matches the Lead ID
+            const staffRow = rosterRows.find(r => r[0]?.trim() === leadId.trim());
+            
+            if (staffRow) {
+                roleId = staffRow[1]; // Column B has the Role ID
+                teamName = staffRow[2] || "Staff Team";
+            }
+        }
+
+        return {
+            success: true,
+            name: factionRow[0],
+            leadId: leadId,
+            threadId: threadId,
+            roleId: roleId,
+            teamName: teamName
+        };
+
+    } catch (err) {
+        console.error("Routing Error:", err);
+        return { error: "Database connection failed." };
+    }
+}
+
+export default {
+    data: new SlashCommandBuilder()
+        .setName("feedback")
+        .setDescription("Submit scene feedback & tag the overseeing team.")
+        .addStringOption(option => 
+            option.setName("faction")
+                .setDescription("The faction name")
+                .setRequired(true)
+                .setAutocomplete(true)
+        ),
+
+    async autocomplete(interaction) {
+        const focused = interaction.options.getFocused().toLowerCase();
+        const choices = await getFactionNames();
+        const filtered = choices.filter(c => c.toLowerCase().includes(focused)).slice(0, 25);
+        await interaction.respond(filtered.map(c => ({ name: c, value: c })));
+    },
+
+    async execute(interaction) {
+        const factionName = interaction.options.getString("faction");
+
+        // 1. Create Modal
+        const modal = new ModalBuilder()
+            .setCustomId(`feedback_modal_${interaction.id}`)
+            .setTitle(`Feedback: ${factionName.slice(0, 35)}`);
+
+        const rewardsInput = new TextInputBuilder()
+            .setCustomId('rewardsInput')
+            .setLabel("Rewards / Items Issued")
+            .setPlaceholder("e.g. 2x Pistols, $5000")
+            .setStyle(TextInputStyle.Short)
+            .setRequired(true);
+
+        const feedbackInput = new TextInputBuilder()
+            .setCustomId('feedbackInput')
+            .setLabel("Scene Feedback / Notes")
+            .setPlaceholder("Describe the scene and any critiques...")
+            .setStyle(TextInputStyle.Paragraph)
+            .setRequired(true);
+
+        modal.addComponents(
+            new ActionRowBuilder().addComponents(rewardsInput),
+            new ActionRowBuilder().addComponents(feedbackInput)
+        );
+
+        await interaction.showModal(modal);
+
+        // 2. Handle Submission
+        try {
+            const submission = await interaction.awaitModalSubmit({
+                time: 600000, // 10 minutes
+                filter: i => i.customId === `feedback_modal_${interaction.id}`
+            });
+
+            const rewards = submission.fields.getTextInputValue('rewardsInput');
+            const feedback = submission.fields.getTextInputValue('feedbackInput');
+
+            await submission.deferReply({ ephemeral: true });
+
+            // 3. Perform Lookup
+            const result = await getFactionRouting(factionName);
+            
+            if (result.error) {
+                return submission.editReply(`❌ ${result.error}`);
+            }
+
+            // 4. Log to "Scene Logs" Tab
+            const today = new Date().toLocaleDateString("en-GB");
+            await sheets.spreadsheets.values.append({
+                spreadsheetId: GOOGLE_SHEET_ID,
+                range: "Scene Logs!A:E",
+                valueInputOption: "USER_ENTERED",
+                requestBody: { 
+                    values: [[today, result.name, rewards, interaction.user.tag, feedback]] 
+                }
+            });
+
+            // 5. Post to Discord Thread
+            const thread = await interaction.client.channels.fetch(result.threadId).catch(() => null);
+            if (!thread) {
+                return submission.editReply(`✅ Logged to Sheets, but ❌ **Could not find Thread** <#${result.threadId}>.`);
+            }
+
+            // construct the tag
+            let ping = "";
+            let footerText = "Logged by " + interaction.user.tag;
+
+            if (result.roleId) {
+                ping = `cc: <@&${result.roleId}>`; // Tags the Team Role
+                footerText += ` • Routing: Lead <@${result.leadId}> → Role <@&${result.roleId}>`;
+            } else {
+                ping = `cc: (No Team Assigned)`;
+                footerText += ` • Routing: No Lead/Role match found.`;
+            }
+
+            const embed = new EmbedBuilder()
+                .setTitle(`📝 Scene Feedback: ${result.name}`)
+                .setColor(0xFFA500) // Orange
+                .addFields(
+                    { name: "Rewards Issued", value: rewards, inline: false },
+                    { name: "Feedback", value: feedback, inline: false }
+                )
+                .setFooter({ text: footerText })
+                .setTimestamp();
+
+            await thread.send({ 
+                content: `**New Feedback Received** ${ping}`, 
+                embeds: [embed] 
+            });
+
+            await submission.editReply(`✅ **Success!** Feedback posted in <#${result.threadId}> and team tagged.`);
+
+        } catch (err) {
+            console.error("Feedback Error:", err);
+            // Catch modal timeout or API errors
+            if (!interaction.replied) {
+                // Ignore timeout errors for user context
+            }
+        }
+    }
+};
