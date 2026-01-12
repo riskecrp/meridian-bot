@@ -57,28 +57,32 @@ const client = new Client({
 // ───────────────────────────────────────────────
 
 /**
- * Converts a target (User or Role) into a mentionable string.
- * FIX: Strips leading '@' to prevent "@@user" errors.
+ * Resolves a target (User or Role) into a mentionable string.
+ * FIX: Checks if input already starts with '@' to prevent double symbols.
  */
 async function resolvePing(guild, type, value) {
     if (!value) return "@Unknown";
+    
+    // 1. Clean the input for searching (remove @ temporarily)
+    const cleanValue = value.replace(/^@/, '').trim().toLowerCase();
+    
     try {
-        // Remove any @ symbol the user might have typed
-        const cleanValue = value.replace(/^@/, '').trim().toLowerCase();
-        
         if (type === "role") {
             const roles = await guild.roles.fetch();
             const role = roles.find(r => r.name.toLowerCase() === cleanValue);
-            return role ? `<@&${role.id}>` : `@${value}`; // Fallback to plain text if not found
+            if (role) return `<@&${role.id}>`;
         } else {
             const members = await guild.members.fetch();
             const member = members.find(m => m.user.username.toLowerCase() === cleanValue);
-            return member ? `<@${member.id}>` : `@${value}`;
+            if (member) return `<@${member.id}>`;
         }
     } catch (e) { 
-        console.error("Ping Resolution Error:", e);
-        return `@${value}`; 
+        console.error("Ping Resolution Error:", e.message);
     }
+
+    // 2. Fallback: If not found, use user input. 
+    // If user typed "@aleks", return "@aleks". If "aleks", return "@aleks".
+    return value.startsWith('@') ? value : `@${value}`;
 }
 
 /**
