@@ -11,7 +11,7 @@ import { DateTime } from "luxon";
 import cron from "node-cron";
 
 // ───────────────────────────────────────────────
-// CONFIGURATION & ENV (Railway)
+// CONFIGURATION & ENV
 // ───────────────────────────────────────────────
 const DISCORD_TOKEN = process.env.DISCORD_TOKEN;
 const CLIENT_ID = process.env.CLIENT_ID;
@@ -32,17 +32,13 @@ const REMINDER_SHEET_HEADERS = [
 ];
 
 // ───────────────────────────────────────────────
-// GOOGLE AUTH
+// AUTH & CLIENT
 // ───────────────────────────────────────────────
 const auth = new google.auth.JWT(
-    GOOGLE_CLIENT_EMAIL, null, GOOGLE_PRIVATE_KEY, 
-    ["https://www.googleapis.com/auth/spreadsheets"]
+    GOOGLE_CLIENT_EMAIL, null, GOOGLE_PRIVATE_KEY, ["https://www.googleapis.com/auth/spreadsheets"]
 );
 const sheets = google.sheets({ version: "v4", auth });
 
-// ───────────────────────────────────────────────
-// CLIENT SETUP (Intents are required for pings)
-// ───────────────────────────────────────────────
 const client = new Client({
     intents: [
         GatewayIntentBits.Guilds,
@@ -69,13 +65,11 @@ async function resolvePing(guild, type, value) {
             const member = members.find(m => m.user.username.toLowerCase() === value.trim().toLowerCase());
             return member ? `<@${member.id}>` : `@${value}`;
         }
-    } catch (e) { 
-        return `@${value}`; 
-    }
+    } catch (e) { return `@${value}`; }
 }
 
-function convertToUTC(date, time) {
-    const dt = DateTime.fromFormat(`${date} ${time}`, "yyyy-MM-dd HH:mm", { zone: "UTC" });
+function convertToUTC(date, time, timezone = "UTC") {
+    const dt = DateTime.fromFormat(`${date} ${time}`, "yyyy-MM-dd HH:mm", { zone: timezone });
     return dt.isValid ? { utcDate: dt.toFormat("yyyy-MM-dd"), utcTime: dt.toFormat("HH:mm") } : null;
 }
 
@@ -90,48 +84,104 @@ async function ensureSheetTab(tabName) {
 }
 
 // ───────────────────────────────────────────────
-// COMMAND DEFINITIONS
+// COMMAND DEFINITIONS (Fixed missing descriptions)
 // ───────────────────────────────────────────────
 const commands = [
-    new SlashCommandBuilder().setName("factioninfo").setDescription("Lookup intelligence data for a specific faction").addStringOption(o => o.setName("faction").setDescription("Faction name").setRequired(true).setAutocomplete(true)),
-    new SlashCommandBuilder().setName("scenecount").setDescription("View scene history from the last 90 days").addStringOption(o => o.setName("faction").setDescription("Faction name").setRequired(true).setAutocomplete(true)),
-    new SlashCommandBuilder().setName("logscene").setDescription("Record a scene execution").addStringOption(o => o.setName("scene_name").setDescription("Name of the scene").setRequired(true).setAutocomplete(true)).addStringOption(o => o.setName("participants").setDescription("Names of participating factions").setRequired(true)),
-    new SlashCommandBuilder().setName("addnote").setDescription("Log a notable interaction for a faction").addStringOption(o => o.setName("faction").setDescription("Faction involved").setRequired(true).setAutocomplete(true)).addStringOption(o => o.setName("note").setDescription("Details").setRequired(true)),
-    new SlashCommandBuilder().setName("getnotes").setDescription("Retrieve recorded notes").addStringOption(o => o.setName("faction").setDescription("Faction name").setRequired(true).setAutocomplete(true)).addBooleanOption(o => o.setName("all").setDescription("Show full history")),
+    new SlashCommandBuilder()
+        .setName("factioninfo")
+        .setDescription("Lookup intelligence data for a specific faction")
+        .addStringOption(o => o.setName("faction").setDescription("The name of the faction").setRequired(true)),
+
+    new SlashCommandBuilder()
+        .setName("scenecount")
+        .setDescription("View scene history from the last 90 days")
+        .addStringOption(o => o.setName("faction").setDescription("The name of the faction").setRequired(true)),
+
+    new SlashCommandBuilder()
+        .setName("logscene")
+        .setDescription("Record a scene execution")
+        .addStringOption(o => o.setName("scene_name").setDescription("Name of the scene").setRequired(true))
+        .addStringOption(o => o.setName("participants").setDescription("Participating factions").setRequired(true)),
+
+    new SlashCommandBuilder()
+        .setName("addnote")
+        .setDescription("Log a notable interaction for a faction")
+        .addStringOption(o => o.setName("faction").setDescription("Faction involved").setRequired(true))
+        .addStringOption(o => o.setName("note").setDescription("Interaction details").setRequired(true)),
+
+    new SlashCommandBuilder()
+        .setName("getnotes")
+        .setDescription("Retrieve recorded notes")
+        .addStringOption(o => o.setName("faction").setDescription("Faction name").setRequired(true))
+        .addBooleanOption(o => o.setName("all").setDescription("Show full history")),
+
     new SlashCommandBuilder().setName("help").setDescription("Show command directory"),
+
     new SlashCommandBuilder().setName("listreminders").setDescription("View scheduled reminders"),
-    new SlashCommandBuilder().setName("setreminder").setDescription("Set a reminder with auto-pings")
-        .addStringOption(o => o.setName("text").setDescription("Content").setRequired(true))
-        .addStringOption(o => o.setName("time").setDescription("HH:MM (24h UTC)").setRequired(true))
-        .addStringOption(o => o.setName("date").setDescription("YYYY-MM-DD").setRequired(true))
+
+    new SlashCommandBuilder()
+        .setName("setreminder")
+        .setDescription("Set a reminder with auto-pings")
+        .addStringOption(o => o.setName("text").setDescription("Content of the reminder").setRequired(true))
+        .addStringOption(o => o.setName("time").setDescription("HH:MM (24h UTC format)").setRequired(true))
+        .addStringOption(o => o.setName("date").setDescription("YYYY-MM-DD format").setRequired(true))
         .addChannelOption(o => o.setName("channel").setDescription("Where to ping").addChannelTypes(0).setRequired(true))
-        .addStringOption(o => o.setName("target_type").setDescription("User or Role").setRequired(true).addChoices({name:"User", value:"user"},{name:"Role", value:"role"}))
+        .addStringOption(o => o.setName("target_type").setDescription("Target Type (User/Role)").setRequired(true).addChoices({name:"User", value:"user"},{name:"Role", value:"role"}))
         .addStringOption(o => o.setName("target_value").setDescription("Username or Role Name").setRequired(true))
-        .addStringOption(o => o.setName("recurrence").setDescription("Pattern").addChoices({name:"None", value:"none"},{name:"Daily", value:"daily"},{name:"Weekly", value:"weekly"},{name:"Monthly", value:"monthly"}))
-        .addStringOption(o => o.setName("timezone").setDescription("Timezone (e.g. America/New_York)")),
-    new SlashCommandBuilder().setName("adddossier").setDescription("Manage intel entries")
-        .addSubcommand(s => s.setName("person").setDescription("Add person").addStringOption(o => o.setName("faction").setRequired(true).setAutocomplete(true)).addStringOption(o => o.setName("character").setRequired(true)).addStringOption(o => o.setName("phone")).addStringOption(o => o.setName("personaladdress")).addBooleanOption(o => o.setName("leader")))
-        .addSubcommand(s => s.setName("location").setDescription("Add location").addStringOption(o => o.setName("faction").setRequired(true).setAutocomplete(true)).addStringOption(o => o.setName("address").setRequired(true)).addBooleanOption(o => o.setName("is_hq").setRequired(true))),
-    new SlashCommandBuilder().setName("addproperty").setDescription("Log property reward").addStringOption(o => o.setName("date").setRequired(true)).addStringOption(o => o.setName("faction").setRequired(true).setAutocomplete(true)).addStringOption(o => o.setName("address").setRequired(true)).addStringOption(o => o.setName("type").setRequired(true).addChoices({name:"HQ",value:"HQ"},{name:"Warehouse",value:"Warehouse"},{name:"Property",value:"Property"})).addBooleanOption(o => o.setName("confiscated").setRequired(true)),
+        .addStringOption(o => o.setName("recurrence").setDescription("Pattern of recurrence").addChoices({name:"None", value:"none"},{name:"Daily", value:"daily"},{name:"Weekly", value:"weekly"},{name:"Monthly", value:"monthly"}))
+        .addStringOption(o => o.setName("timezone").setDescription("Timezone (Default: UTC)")),
+
+    new SlashCommandBuilder()
+        .setName("adddossier")
+        .setDescription("Manage intelligence entries")
+        .addSubcommand(s => s.setName("person").setDescription("Add a person to the database")
+            .addStringOption(o => o.setName("faction").setDescription("Faction name").setRequired(true))
+            .addStringOption(o => o.setName("character").setDescription("Character name").setRequired(true))
+            .addStringOption(o => o.setName("phone").setDescription("Phone number"))
+            .addStringOption(o => o.setName("personaladdress").setDescription("Residential address"))
+            .addBooleanOption(o => o.setName("leader").setDescription("Is this character a leader?")))
+        .addSubcommand(s => s.setName("location").setDescription("Add a location to the database")
+            .addStringOption(o => o.setName("faction").setDescription("Owning faction").setRequired(true))
+            .addStringOption(o => o.setName("address").setDescription("Street address").setRequired(true))
+            .addBooleanOption(o => o.setName("is_hq").setDescription("Is this an HQ?").setRequired(true))),
+
+    new SlashCommandBuilder()
+        .setName("addproperty")
+        .setDescription("Log a new property reward")
+        .addStringOption(o => o.setName("date").setDescription("Date given (YYYY-MM-DD)").setRequired(true))
+        .addStringOption(o => o.setName("faction").setDescription("Recipient faction").setRequired(true))
+        .addStringOption(o => o.setName("address").setDescription("Property address").setRequired(true))
+        .addStringOption(o => o.setName("type").setDescription("Type of reward").setRequired(true).addChoices({name:"HQ",value:"HQ"},{name:"Warehouse",value:"Warehouse"},{name:"Property",value:"Property"}))
+        .addBooleanOption(o => o.setName("confiscated").setDescription("Already confiscated?").setRequired(true)),
+
     new SlashCommandBuilder().setName("listproperties").setDescription("List master property log"),
-    new SlashCommandBuilder().setName("confiscateproperty").setDescription("Mark property as confiscated").addStringOption(o => o.setName("date").setRequired(true)).addStringOption(o => o.setName("faction").setRequired(true).setAutocomplete(true)).addStringOption(o => o.setName("address").setRequired(true)).addStringOption(o => o.setName("type").setRequired(true)).addBooleanOption(o => o.setName("confiscated").setRequired(true))
+
+    new SlashCommandBuilder()
+        .setName("confiscateproperty")
+        .setDescription("Mark a property as confiscated")
+        .addStringOption(o => o.setName("date").setDescription("Date of confiscation").setRequired(true))
+        .addStringOption(o => o.setName("faction").setDescription("Faction name").setRequired(true))
+        .addStringOption(o => o.setName("address").setDescription("Address of property").setRequired(true))
+        .addStringOption(o => o.setName("type").setDescription("Type of property").setRequired(true))
+        .addBooleanOption(o => o.setName("confiscated").setDescription("Set to true to confirm").setRequired(true))
 ];
 
 // ───────────────────────────────────────────────
 // STARTUP & CRON
 // ───────────────────────────────────────────────
 client.once("ready", async () => {
-    const rest = new REST({ version: "10" }).setToken(DISCORD_TOKEN);
-    await rest.put(Routes.applicationGuildCommands(CLIENT_ID, GUILD_ID), { body: commands });
-    console.log("[SYSTEM] Meridian Bot Online. Checking sheet every 60s.");
-    cron.schedule("* * * * *", () => checkReminders());
+    try {
+        const rest = new REST({ version: "10" }).setToken(DISCORD_TOKEN);
+        await rest.put(Routes.applicationGuildCommands(CLIENT_ID, GUILD_ID), { body: commands });
+        console.log("[SYSTEM] Meridian Bot Online & Commands Registered");
+        cron.schedule("* * * * *", () => checkReminders());
+    } catch (e) { console.error("Registration Error:", e); }
 });
 
 // ───────────────────────────────────────────────
 // COMMAND HANDLER
 // ───────────────────────────────────────────────
 client.on("interactionCreate", async interaction => {
-    if (interaction.isAutocomplete()) return interaction.respond([]); 
     if (!interaction.isChatInputCommand()) return;
 
     const isFM = interaction.member.roles.cache.has(FACTION_MANAGEMENT_ROLE_ID);
@@ -140,24 +190,21 @@ client.on("interactionCreate", async interaction => {
 
     // Permission Gates
     const fmCmds = ["factioninfo", "scenecount", "help", "logscene", "addnote", "getnotes", "setreminder", "listreminders"];
-    if (fmCmds.includes(interaction.commandName) && !isFM) return interaction.reply({ content: "❌ Unauthorized: Faction Management required.", ephemeral: true });
-    if (interaction.commandName === "adddossier" && !isTL) return interaction.reply({ content: "❌ Unauthorized: Team Lead required.", ephemeral: true });
-    if (["addproperty", "listproperties", "confiscateproperty"].includes(interaction.commandName) && !isMgt) return interaction.reply({ content: "❌ Unauthorized: FM Management required.", ephemeral: true });
+    if (fmCmds.includes(interaction.commandName) && !isFM) return interaction.reply({ content: "❌ Requires [ECRP] Faction Management role.", ephemeral: true });
+    if (interaction.commandName === "adddossier" && !isTL) return interaction.reply({ content: "❌ Requires Team Lead role.", ephemeral: true });
+    if (["addproperty", "listproperties", "confiscateproperty"].includes(interaction.commandName) && !isMgt) return interaction.reply({ content: "❌ Requires [ECRP] FM Management role.", ephemeral: true });
 
-    // Implementation: Set Reminder
     if (interaction.commandName === "setreminder") {
         await interaction.deferReply({ ephemeral: true });
-        const text = interaction.options.getString("text");
-        const time = interaction.options.getString("time");
-        const date = interaction.options.getString("date");
-        const chan = interaction.options.getChannel("channel");
-        const tType = interaction.options.getString("target_type");
-        const tVal = interaction.options.getString("target_value");
-        const rec = interaction.options.getString("recurrence") || "none";
-        const tz = interaction.options.getString("timezone") || "UTC";
+        const [text, time, date, chan, tType, tVal, rec, tz] = [
+            interaction.options.getString("text"), interaction.options.getString("time"),
+            interaction.options.getString("date"), interaction.options.getChannel("channel"),
+            interaction.options.getString("target_type"), interaction.options.getString("target_value"),
+            interaction.options.getString("recurrence") || "none", interaction.options.getString("timezone") || "UTC"
+        ];
 
-        const utc = convertToUTC(date, time);
-        if (!utc) return interaction.editReply("❌ Invalid Date/Time format (YYYY-MM-DD HH:MM).");
+        const utc = convertToUTC(date, time, tz);
+        if (!utc) return interaction.editReply("❌ Invalid Date/Time format.");
 
         try {
             await ensureSheetTab("Reminders");
@@ -182,12 +229,10 @@ client.on("interactionCreate", async interaction => {
             );
         return interaction.reply({ embeds: [embed], ephemeral: true });
     }
-
-    // Logic for Intelligence/Property follows the standard sheet filtering pattern...
 });
 
 // ───────────────────────────────────────────────
-// THE REMINDER ENGINE
+// REMINDER ENGINE
 // ───────────────────────────────────────────────
 async function checkReminders() {
     try {
@@ -207,7 +252,7 @@ async function checkReminders() {
                 const diff = rDt.diff(now, 'minutes').minutes;
                 const key = `${r[5]}_${r[4]}_${r[11]}`;
 
-                // 1. 30m Warning
+                // 30m Warning
                 if (diff <= 30 && diff > 25 && !notified30m.has(key)) {
                     const chan = await guild.channels.fetch(r[13]);
                     const ping = await resolvePing(guild, r[10], r[11]);
@@ -216,7 +261,7 @@ async function checkReminders() {
                     notified30m.add(key);
                 }
 
-                // 2. Final Alert & Cleanup
+                // Final Alert & Cleanup
                 if (diff <= 0 && diff > -3 && !notifiedFinal.has(key)) {
                     const chan = await guild.channels.fetch(r[13]);
                     const ping = await resolvePing(guild, r[10], r[11]);
@@ -225,7 +270,6 @@ async function checkReminders() {
                     notifiedFinal.add(key);
 
                     if (r[6].toLowerCase() === "none") {
-                        // DELETE ROW using the hardcoded GID
                         await sheets.spreadsheets.batchUpdate({
                             spreadsheetId: GOOGLE_SHEET_ID,
                             requestBody: {
@@ -233,7 +277,6 @@ async function checkReminders() {
                             }
                         });
                     } else {
-                        // UPDATE RECURRENCE
                         const next = rDt.plus(r[6].toLowerCase() === "daily" ? { days: 1 } : r[6].toLowerCase() === "weekly" ? { weeks: 1 } : { months: 1 });
                         await sheets.spreadsheets.values.update({
                             spreadsheetId: GOOGLE_SHEET_ID, range: `Reminders!F${i + 2}`,
@@ -243,9 +286,9 @@ async function checkReminders() {
                         notifiedFinal.delete(key);
                     }
                 }
-            } catch (err) { console.error(`Row ${i+2} Error:`, err.message); }
+            } catch (err) { console.error(`Row ${i+2} Loop Error:`, err.message); }
         }
-    } catch (e) { console.error("Sheet Fetch Error:", e.message); }
+    } catch (e) { console.error("Cron Error:", e.message); }
 }
 
 client.login(DISCORD_TOKEN);
