@@ -1,24 +1,24 @@
 import { SlashCommandBuilder } from "discord.js";
 import { sheets, GOOGLE_SHEET_ID } from "../utils/googleClient.js";
 
-// --- HELPER: Find Reminders Created by Username ---
-async function getMyReminders(username) {
+// --- HELPER: Find ACTIVE Reminders Created by Username ---
+async function getMyActiveReminders(username) {
     try {
         const res = await sheets.spreadsheets.values.get({
             spreadsheetId: GOOGLE_SHEET_ID,
-            range: "Reminders!A2:H999" // We need up to Col H (Creator)
+            // Need up to Col M (Index 12) for Status
+            range: "Reminders!A2:M999" 
         });
         const rows = res.data.values || [];
         
-        // Map rows to objects
-        // Schema: 0=Text, 1=Time, 2=Date, ... 7=Creator
         return rows.map((r, i) => ({
-            index: i + 2, // Sheet Row Index (1-based, +1 for header)
+            index: i + 2, // Sheet Row Index
             text: r[0],
-            date: r[2],
             time: r[1],
-            creator: r[7] // Column H
-        })).filter(r => r.creator === username);
+            date: r[2],
+            creator: r[7],
+            status: (r[12] || "").toLowerCase()
+        })).filter(r => r.creator === username && r.status === "active");
 
     } catch (err) {
         console.error("Error fetching reminders:", err);
@@ -26,7 +26,7 @@ async function getMyReminders(username) {
     }
 }
 
-// --- HELPER: Get Sheet ID (Needed for deletion) ---
+// --- HELPER: Get Sheet ID ---
 async function getSheetId(title) {
     try {
         const res = await sheets.spreadsheets.get({ spreadsheetId: GOOGLE_SHEET_ID });
@@ -38,7 +38,7 @@ async function getSheetId(title) {
 export default {
     data: new SlashCommandBuilder()
         .setName("delreminder")
-        .setDescription("Delete a reminder you created.")
+        .setDescription("Delete an active reminder you created.")
         .addStringOption(option => 
             option.setName("reminder")
                 .setDescription("Select the reminder to delete")
@@ -49,8 +49,8 @@ export default {
     async autocomplete(interaction) {
         const focused = interaction.options.getFocused().toLowerCase();
         
-        // Filter by USERNAME, not ID
-        const myReminders = await getMyReminders(interaction.user.username);
+        // Only fetch ACTIVE reminders
+        const myReminders = await getMyActiveReminders(interaction.user.username);
 
         const choices = myReminders.map(r => ({
             name: `${r.date} ${r.time}: ${r.text.slice(0, 30)}...`,
@@ -65,22 +65,25 @@ export default {
         await interaction.deferReply({ ephemeral: true });
         const rowNum = parseInt(interaction.options.getString("reminder"));
 
-        if (isNaN(rowNum)) {
-            return interaction.editReply("❌ Invalid selection.");
-        }
+        if (isNaN(rowNum)) return interaction.editReply("❌ Invalid selection.");
 
         try {
-            // Verify ownership (Column H / Index 7)
-            // We fetch the specific row to be safe
+            // Verify ownership AND status
             const checkRes = await sheets.spreadsheets.values.get({
                 spreadsheetId: GOOGLE_SHEET_ID,
-                range: `Reminders!H${rowNum}` // Column H is Creator
+                range: `Reminders!H${rowNum}:M${rowNum}` // H=Creator, M=Status
             });
             
-            const realCreator = checkRes.data.values?.[0]?.[0];
+            const row = checkRes.data.values?.[0] || [];
+            const realCreator = row[0]; // H
+            // M is index 5 relative to H (H, I, J, K, L, M)
+            const status = (row[5] || "").toLowerCase(); 
 
             if (realCreator !== interaction.user.username) {
                 return interaction.editReply("❌ You cannot delete a reminder you didn't create.");
+            }
+            if (status !== "active") {
+                return interaction.editReply("❌ This reminder is not active (or already deleted).");
             }
 
             // Perform Deletion
@@ -95,7 +98,7 @@ export default {
                             range: {
                                 sheetId: sheetId,
                                 dimension: "ROWS",
-                                startIndex: rowNum - 1, // API is 0-based
+                                startIndex: rowNum - 1, 
                                 endIndex: rowNum
                             }
                         }
