@@ -133,7 +133,6 @@ export default {
             }
 
             // 4. Log to "Scene Logs" Tab
-            // Format: A=Date, B=Faction, C=Rewards, D=LoggedBy, E=Feedback
             const today = getTodayDate(); // DD/MON/YYYY
             await sheets.spreadsheets.values.append({
                 spreadsheetId: GOOGLE_SHEET_ID,
@@ -153,14 +152,18 @@ export default {
             // Construct the Tag
             const ping = result.roleId ? `cc: <@&${result.roleId}>` : `cc: (No Team Assigned)`;
 
+            // Safety Truncation for Rewards Field (Limit is 1024)
+            const safeRewards = rewards.length > 1000 ? rewards.substring(0, 1000) + "..." : rewards;
+
             const embed = new EmbedBuilder()
                 .setTitle(`📝 Scene Feedback: ${result.name}`)
                 .setColor(0xFFA500)
+                // FEEDBACK IS NOW IN DESCRIPTION (Allows 4096 chars)
+                .setDescription(`**Feedback**\n${feedback}`)
                 .addFields(
-                    { name: "Rewards Issued", value: rewards, inline: false },
-                    { name: "Feedback", value: feedback, inline: false }
+                    { name: "Rewards Issued", value: safeRewards, inline: false }
                 )
-                .setFooter({ text: `Logged by ${interaction.user.tag}` }) // Clean footer
+                .setFooter({ text: `Logged by ${interaction.user.tag}` })
                 .setTimestamp();
 
             await thread.send({ 
@@ -173,7 +176,7 @@ export default {
         } catch (err) {
             console.error("Feedback Error:", err);
             if (!interaction.replied) {
-                // Ignore errors if context already lost
+               // Silently catch timeout to prevent double reply crashes
             }
         }
     }
