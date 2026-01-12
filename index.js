@@ -270,7 +270,7 @@ async function checkReminders() {
                     
                     const embed = new EmbedBuilder()
                         .setColor(0xffa500)
-                        .setTitle("⏰ 30-MINUTE WARNING")
+                        .setTitle("⏰ 30 Minute Reminder")
                         .setDescription(`**Event:** ${r[0]}\n**Time:** <t:${Math.floor(rDt.toSeconds())}:R>`);
 
                     await channel.send({ 
@@ -292,7 +292,7 @@ async function checkReminders() {
 
                     const embed = new EmbedBuilder()
                         .setColor(0xff0000)
-                        .setTitle("🔔 EVENT REMINDER")
+                        .setTitle("🔔 Last Reminder")
                         .setDescription(`**Happening Now:** ${r[0]}`);
 
                     await channel.send({ 
