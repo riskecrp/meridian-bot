@@ -2039,12 +2039,11 @@ async function checkReminders() {
                     if (role) {
                         notificationRoleMention = ` <@&${notificationRoleId}>`;
                     } else {
-                        // Fallback if role no longer exists
-                        notificationRoleMention = notificationRoleName ? ` @${notificationRoleName}` : "";
+                        // Role no longer exists, log warning and skip mention
+                        console.warn(`Notification role ${notificationRoleId} (${notificationRoleName}) no longer exists`);
                     }
                 } catch (err) {
-                    console.warn(`Failed to fetch role ${notificationRoleId}, using name fallback`);
-                    notificationRoleMention = notificationRoleName ? ` @${notificationRoleName}` : "";
+                    console.warn(`Failed to fetch notification role ${notificationRoleId} (${notificationRoleName}):`, err.message);
                 }
             }
 
