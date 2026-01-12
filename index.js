@@ -151,7 +151,7 @@ const commands = [
 // ───────────────────────────────────────────────
 // 6. INITIALIZATION & CRON
 // ───────────────────────────────────────────────
-client.once("ready", async () => {
+client.once("clientReady", async () => {
     try {
         const rest = new REST({ version: "10" }).setToken(DISCORD_TOKEN);
         await rest.put(Routes.applicationGuildCommands(CLIENT_ID, GUILD_ID), { body: commands });
