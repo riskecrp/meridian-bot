@@ -1,7 +1,16 @@
 import { SlashCommandBuilder, EmbedBuilder, ModalBuilder, TextInputBuilder, TextInputStyle, ActionRowBuilder } from "discord.js";
 import { sheets, GOOGLE_SHEET_ID } from "../utils/googleClient.js";
 
-// --- HELPER: Fetch Faction Names for Autocomplete ---
+// --- HELPER: Get Date as DD/MON/YYYY ---
+function getTodayDate() {
+    const date = new Date();
+    const day = String(date.getDate()).padStart(2, '0');
+    const month = date.toLocaleString('en-GB', { month: 'short' }).toUpperCase();
+    const year = date.getFullYear();
+    return `${day}/${month}/${year}`;
+}
+
+// --- HELPER: Fetch Faction Names ---
 async function getFactionNames() {
     try {
         const res = await sheets.spreadsheets.values.get({
@@ -18,7 +27,7 @@ async function getFactionNames() {
 // --- HELPER: Double Lookup (Matrix -> Lead -> Staff Role) ---
 async function getFactionRouting(factionName) {
     try {
-        // STEP 1: Look up Faction in Matrix (FactionData)
+        // STEP 1: Look up Faction in Matrix
         const matrixRes = await sheets.spreadsheets.values.get({
             spreadsheetId: GOOGLE_SHEET_ID,
             range: "FactionData!A:E" // A=Name, B=LeadID, E=ThreadID
@@ -29,39 +38,27 @@ async function getFactionRouting(factionName) {
         
         if (!factionRow) return { error: `Faction **${factionName}** not found in FactionData.` };
 
-        const leadId = factionRow[1];      // Column B (Team Lead ID)
-        const threadId = factionRow[4];    // Column E (Thread ID)
+        const leadId = factionRow[1];      // Column B
+        const threadId = factionRow[4];    // Column E
 
         if (!threadId) return { error: `No **Thread ID** found in Column E for **${factionName}**.` };
 
-        // STEP 2: Look up Role in Roster (StaffRoster) using Lead ID
+        // STEP 2: Look up Role in Roster
         let roleId = null;
-        let teamName = "Unknown Team";
-
-        // Only search roster if a valid Lead ID exists
         if (leadId && leadId !== "None" && /^\d+$/.test(leadId)) {
             const rosterRes = await sheets.spreadsheets.values.get({
                 spreadsheetId: GOOGLE_SHEET_ID,
-                range: "StaffRoster!A:C" // A=User ID, B=Role ID, C=Name (Optional)
+                range: "StaffRoster!A:B" // A=User ID, B=Role ID
             });
-            
-            const rosterRows = rosterRes.data.values || [];
-            // Find row where Column A matches the Lead ID
-            const staffRow = rosterRows.find(r => r[0]?.trim() === leadId.trim());
-            
-            if (staffRow) {
-                roleId = staffRow[1]; // Column B has the Role ID
-                teamName = staffRow[2] || "Staff Team";
-            }
+            const staffRow = (rosterRes.data.values || []).find(r => r[0]?.trim() === leadId.trim());
+            if (staffRow) roleId = staffRow[1];
         }
 
         return {
             success: true,
             name: factionRow[0],
-            leadId: leadId,
             threadId: threadId,
-            roleId: roleId,
-            teamName: teamName
+            roleId: roleId
         };
 
     } catch (err) {
@@ -99,7 +96,7 @@ export default {
         const rewardsInput = new TextInputBuilder()
             .setCustomId('rewardsInput')
             .setLabel("Rewards / Items Issued")
-            .setPlaceholder("e.g. 2x Pistols, $5000")
+            .setPlaceholder("e.g. 2x Pistols, $5000 (or None)")
             .setStyle(TextInputStyle.Short)
             .setRequired(true);
 
@@ -120,7 +117,7 @@ export default {
         // 2. Handle Submission
         try {
             const submission = await interaction.awaitModalSubmit({
-                time: 600000, // 10 minutes
+                time: 600000, 
                 filter: i => i.customId === `feedback_modal_${interaction.id}`
             });
 
@@ -131,13 +128,13 @@ export default {
 
             // 3. Perform Lookup
             const result = await getFactionRouting(factionName);
-            
             if (result.error) {
                 return submission.editReply(`❌ ${result.error}`);
             }
 
             // 4. Log to "Scene Logs" Tab
-            const today = new Date().toLocaleDateString("en-GB");
+            // Format: A=Date, B=Faction, C=Rewards, D=LoggedBy, E=Feedback
+            const today = getTodayDate(); // DD/MON/YYYY
             await sheets.spreadsheets.values.append({
                 spreadsheetId: GOOGLE_SHEET_ID,
                 range: "Scene Logs!A:E",
@@ -153,26 +150,17 @@ export default {
                 return submission.editReply(`✅ Logged to Sheets, but ❌ **Could not find Thread** <#${result.threadId}>.`);
             }
 
-            // construct the tag
-            let ping = "";
-            let footerText = "Logged by " + interaction.user.tag;
-
-            if (result.roleId) {
-                ping = `cc: <@&${result.roleId}>`; // Tags the Team Role
-                footerText += ` • Routing: Lead <@${result.leadId}> → Role <@&${result.roleId}>`;
-            } else {
-                ping = `cc: (No Team Assigned)`;
-                footerText += ` • Routing: No Lead/Role match found.`;
-            }
+            // Construct the Tag
+            const ping = result.roleId ? `cc: <@&${result.roleId}>` : `cc: (No Team Assigned)`;
 
             const embed = new EmbedBuilder()
                 .setTitle(`📝 Scene Feedback: ${result.name}`)
-                .setColor(0xFFA500) // Orange
+                .setColor(0xFFA500)
                 .addFields(
                     { name: "Rewards Issued", value: rewards, inline: false },
                     { name: "Feedback", value: feedback, inline: false }
                 )
-                .setFooter({ text: footerText })
+                .setFooter({ text: `Logged by ${interaction.user.tag}` }) // Clean footer
                 .setTimestamp();
 
             await thread.send({ 
@@ -180,13 +168,12 @@ export default {
                 embeds: [embed] 
             });
 
-            await submission.editReply(`✅ **Success!** Feedback posted in <#${result.threadId}> and team tagged.`);
+            await submission.editReply(`✅ **Success!** Feedback posted in <#${result.threadId}> and logged to sheet.`);
 
         } catch (err) {
             console.error("Feedback Error:", err);
-            // Catch modal timeout or API errors
             if (!interaction.replied) {
-                // Ignore timeout errors for user context
+                // Ignore errors if context already lost
             }
         }
     }
