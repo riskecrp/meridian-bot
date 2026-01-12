@@ -26,10 +26,23 @@ const FACTION_MANAGEMENT_ROLE_ID = "1457229857749729363";
 
 // REMINDER SHEET HEADERS
 const REMINDER_SHEET_HEADERS = [
-    "Reminder Text", "Input Time", "Input Date", "Input Timezone", 
-    "UTC Time", "UTC Date", "Recurrence", "Creator", "Creator Role", 
-    "Visibility", "Target Type", "Target Value", "Status", 
-    "Channel ID", "Channel Name", "Notification Role ID", "Notification Role Name"
+    "Reminder Text",
+    "Input Time",
+    "Input Date",
+    "Input Timezone",
+    "UTC Time",
+    "UTC Date",
+    "Recurrence",
+    "Creator",
+    "Creator Role",
+    "Visibility",
+    "Target Type",
+    "Target Value",
+    "Status",
+    "Channel ID",
+    "Channel Name",
+    "Notification Role ID",
+    "Notification Role Name"
 ];
 
 // GOOGLE AUTH
@@ -605,6 +618,11 @@ function chunkLinesToFieldValues(lines, maxLen = 1024) {
     if (current) chunks.push(current);
 
     return chunks;
+}
+
+// Get the last column letter for the Reminders sheet based on header count
+function getReminderSheetLastColumn() {
+    return numberToColumnLetter(REMINDER_SHEET_HEADERS.length);
 }
 
 // ───────────────────────────────────────────────
@@ -1617,9 +1635,10 @@ client.on("interactionCreate", async interaction => {
             // Add the reminder with UTC conversion, target information, channel, and notification role
             // Status: "active" for new reminders
             const nextRow = await findNextRowInTab("Reminders", "A");
+            const lastCol = getReminderSheetLastColumn();
             await sheets.spreadsheets.values.update({
                 spreadsheetId: GOOGLE_SHEET_ID,
-                range: `Reminders!A${nextRow}:Q${nextRow}`,
+                range: `Reminders!A${nextRow}:${lastCol}${nextRow}`,
                 valueInputOption: "USER_ENTERED",
                 requestBody: {
                     values: [[text, time, date, timezone, utcConversion.utcTime, utcConversion.utcDate, recurrence, creator, creatorRole, visibility, targetType, targetValue, "active", channelId, channelName, notificationRoleId, notificationRoleName]]
@@ -1690,9 +1709,10 @@ client.on("interactionCreate", async interaction => {
             }
 
             // Get reminders - now includes UTC columns, status, channel, and notification role
+            const lastCol = getReminderSheetLastColumn();
             const res = await sheets.spreadsheets.values.get({
                 spreadsheetId: GOOGLE_SHEET_ID,
-                range: "Reminders!A:Q"
+                range: `Reminders!A:${lastCol}`
             });
 
             const rows = res.data.values || [];
@@ -1962,9 +1982,10 @@ async function getNotificationChannel(client) {
 async function checkReminders() {
     try {
         // Get all active reminders - including new channel and notification role columns
+        const lastCol = getReminderSheetLastColumn();
         const res = await sheets.spreadsheets.values.get({
             spreadsheetId: GOOGLE_SHEET_ID,
-            range: "Reminders!A:Q"
+            range: `Reminders!A:${lastCol}`
         });
 
         const rows = res.data.values || [];
@@ -2045,7 +2066,7 @@ async function checkReminders() {
                 try {
                     const role = await guild.roles.fetch(notificationRoleId);
                     if (role) {
-                        // Add leading space to separate from target mention
+                        // Include leading space to separate this mention from the target mention
                         notificationRoleMention = ` <@&${notificationRoleId}>`;
                     } else {
                         // Role no longer exists, log warning and skip mention
