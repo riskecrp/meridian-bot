@@ -5,6 +5,7 @@ import {
     Routes,
     SlashCommandBuilder,
     EmbedBuilder,
+    MessageFlags 
 } from "discord.js";
 import { google } from "googleapis";
 import { DateTime } from "luxon";
@@ -17,7 +18,7 @@ const DISCORD_TOKEN = process.env.DISCORD_TOKEN;
 const CLIENT_ID = process.env.CLIENT_ID;
 const GUILD_ID = process.env.GUILD_ID;
 const GOOGLE_CLIENT_EMAIL = process.env.GOOGLE_CLIENT_EMAIL;
-// Fix private key newlines for Railway
+// Handle Railway's newline formatting in private keys
 const GOOGLE_PRIVATE_KEY = process.env.GOOGLE_PRIVATE_KEY?.replace(/\\n/g, "\n");
 const GOOGLE_SHEET_ID = process.env.GOOGLE_SHEET_ID;
 
@@ -58,13 +59,13 @@ const client = new Client({
 
 /**
  * Resolves a target (User or Role) into a mentionable string.
- * FIX: Does NOT add an extra '@' if the search fails; trusts user input.
+ * FIX: Checks if input already starts with '@' to prevent double symbols.
  */
 async function resolvePing(guild, type, value) {
-    if (!value) return "Unknown";
+    if (!value) return "@Unknown";
     
-    // 1. Strip ALL leading @ symbols for the search (e.g. "@@aleks" -> "aleks")
-    const cleanValue = value.replace(/^@+/, '').trim().toLowerCase();
+    // 1. Clean the input for searching (remove @ temporarily)
+    const cleanValue = value.replace(/^@/, '').trim().toLowerCase();
     
     try {
         if (type === "role") {
@@ -80,9 +81,8 @@ async function resolvePing(guild, type, value) {
         console.error("Ping Resolution Error:", e.message);
     }
 
-    // 2. Fallback: Return exactly what the user typed.
-    // If user typed "@aleks", we return "@aleks". No double @.
-    return value;
+    // 2. Fallback: If not found, use user input. 
+    return value.startsWith('@') ? value : `@${value}`;
 }
 
 /**
@@ -90,9 +90,11 @@ async function resolvePing(guild, type, value) {
  * FIX: Adds padding to time inputs (3:30 -> 03:30)
  */
 function convertToUTC(date, time, timezone) {
+    // Pad time just in case user inputs "3:30" instead of "03:30"
     const paddedTime = time.includes(":") && time.length < 5 ? time.padStart(5, "0") : time;
-    const dt = DateTime.fromFormat(`${date} ${paddedTime}`, "yyyy-MM-dd HH:mm", { zone: timezone });
     
+    // Attempt strict parsing first
+    const dt = DateTime.fromFormat(`${date} ${paddedTime}`, "yyyy-MM-dd HH:mm", { zone: timezone });
     if (!dt.isValid) return null;
     
     const utcDt = dt.toUTC();
@@ -160,6 +162,7 @@ client.once("ready", async () => {
         await rest.put(Routes.applicationGuildCommands(CLIENT_ID, GUILD_ID), { body: commands });
         console.log(`[SYSTEM] Meridian Bot Online (${client.user.tag})`);
         
+        // Start Cron Job
         cron.schedule("* * * * *", () => {
             console.log(`[CRON] Tick.`);
             checkReminders();
@@ -180,13 +183,13 @@ client.on("interactionCreate", async interaction => {
 
     // Permissions
     const fmCmds = ["factioninfo", "scenecount", "help", "logscene", "addnote", "getnotes", "setreminder", "listreminders"];
-    if (fmCmds.includes(interaction.commandName) && !isFM) return interaction.reply({ content: "❌ Unauthorized: FM Role Required.", ephemeral: true });
-    if (interaction.commandName === "adddossier" && !isTL) return interaction.reply({ content: "❌ Unauthorized: Team Lead Role Required.", ephemeral: true });
-    if (["addproperty", "listproperties", "confiscateproperty"].includes(interaction.commandName) && !isMgt) return interaction.reply({ content: "❌ Unauthorized: FM Management Role Required.", ephemeral: true });
+    if (fmCmds.includes(interaction.commandName) && !isFM) return interaction.reply({ content: "❌ Unauthorized: FM Role Required.", flags: MessageFlags.Ephemeral });
+    if (interaction.commandName === "adddossier" && !isTL) return interaction.reply({ content: "❌ Unauthorized: Team Lead Role Required.", flags: MessageFlags.Ephemeral });
+    if (["addproperty", "listproperties", "confiscateproperty"].includes(interaction.commandName) && !isMgt) return interaction.reply({ content: "❌ Unauthorized: FM Management Role Required.", flags: MessageFlags.Ephemeral });
 
     // SET REMINDER
     if (interaction.commandName === "setreminder") {
-        await interaction.deferReply({ ephemeral: true });
+        await interaction.deferReply({ flags: MessageFlags.Ephemeral });
 
         const [text, time, date, channel, targetType, targetValue, recurrence, timezone] = [
             interaction.options.getString("text"),
@@ -227,11 +230,11 @@ client.on("interactionCreate", async interaction => {
         }
     }
 
-    if (interaction.commandName === "help") return interaction.reply({ content: "Bot Online.", ephemeral: true });
+    if (interaction.commandName === "help") return interaction.reply({ content: "Bot Online.", flags: MessageFlags.Ephemeral });
 });
 
 // ───────────────────────────────────────────────
-// 8. REMINDER ENGINE (SPAM FIXED & PING FIXED)
+// 8. REMINDER ENGINE
 // ───────────────────────────────────────────────
 async function checkReminders() {
     try {
