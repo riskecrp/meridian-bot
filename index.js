@@ -477,6 +477,12 @@ client.once("ready", () => {
         activities: [{ name: "Waiting for associate request...", type: 3 }],
         status: "online"
     });
+    
+    // Start reminder checking system after bot is ready
+    console.log("Starting reminder notification system...");
+    cron.schedule('* * * * *', () => {
+        checkReminders();
+    });
 });
 
 // ───────────────────────────────────────────────
@@ -1859,8 +1865,13 @@ client.on("interactionCreate", async interaction => {
 // REMINDER NOTIFICATION SYSTEM
 // ───────────────────────────────────────────────
 
+// Constants for reminder notifications
+const NOTIFICATION_WINDOW_MS = 5 * 60 * 1000; // 5 minutes window to catch notifications
+const THIRTY_MINUTES_MS = 30 * 60 * 1000;
+const NOTIFICATION_CLEANUP_SIZE = 1000;
+
 // Track which reminders have been notified (to prevent duplicate pings)
-const notifiedReminders = new Set();
+const notifiedReminders = new Map(); // Map of reminderKey -> timestamp
 
 // Helper to resolve target mentions
 async function resolveTargetMention(guild, targetType, targetValue) {
@@ -1887,12 +1898,18 @@ async function getNotificationChannel(client) {
         const guild = await client.guilds.fetch(GUILD_ID);
         const channels = await guild.channels.fetch();
         
+        // Fetch the bot's member object
+        await guild.members.fetch(client.user.id);
+        
         // Find first text channel the bot can send messages to
-        const textChannel = channels.find(ch => 
-            ch.isTextBased() && 
-            !ch.isVoiceBased() && 
-            ch.permissionsFor(guild.members.me).has(PermissionFlagsBits.SendMessages)
-        );
+        const textChannel = channels.find(ch => {
+            if (!ch.isTextBased() || ch.isVoiceBased()) return false;
+            
+            const botMember = guild.members.me;
+            if (!botMember) return false;
+            
+            return ch.permissionsFor(botMember).has(PermissionFlagsBits.SendMessages);
+        });
         
         return textChannel;
     } catch (err) {
@@ -1935,15 +1952,15 @@ async function checkReminders() {
             if (!reminderDt.isValid) continue;
 
             const reminderTimestamp = reminderDt.toMillis();
-            const thirtyMinsBefore = reminderTimestamp - (30 * 60 * 1000);
+            const thirtyMinsBefore = reminderTimestamp - THIRTY_MINUTES_MS;
 
             // Create unique key for this reminder instance
             const reminderKey = `${i}_${utcDate}_${utcTime}`;
             const thirtyMinsKey = `${reminderKey}_30mins`;
 
             // Check if it's time to send notification
-            const shouldNotifyNow = nowTimestamp >= reminderTimestamp && nowTimestamp < reminderTimestamp + (5 * 60 * 1000);
-            const shouldNotify30Mins = nowTimestamp >= thirtyMinsBefore && nowTimestamp < thirtyMinsBefore + (5 * 60 * 1000);
+            const shouldNotifyNow = nowTimestamp >= reminderTimestamp && nowTimestamp < reminderTimestamp + NOTIFICATION_WINDOW_MS;
+            const shouldNotify30Mins = nowTimestamp >= thirtyMinsBefore && nowTimestamp < thirtyMinsBefore + NOTIFICATION_WINDOW_MS;
 
             // Get notification channel
             const channel = await getNotificationChannel(client);
@@ -1964,7 +1981,7 @@ async function checkReminders() {
                     .setFooter({ text: `Scheduled for ${reminderDt.toFormat("yyyy-MM-dd HH:mm")} UTC` });
 
                 await channel.send({ embeds: [embed] });
-                notifiedReminders.add(thirtyMinsKey);
+                notifiedReminders.set(thirtyMinsKey, nowTimestamp);
                 console.log(`Sent 30-min warning for reminder: ${reminderText}`);
             }
 
@@ -1977,7 +1994,7 @@ async function checkReminders() {
                     .setFooter({ text: `Scheduled for ${reminderDt.toFormat("yyyy-MM-dd HH:mm")} UTC` });
 
                 await channel.send({ embeds: [embed] });
-                notifiedReminders.add(reminderKey);
+                notifiedReminders.set(reminderKey, nowTimestamp);
                 console.log(`Sent notification for reminder: ${reminderText}`);
 
                 // Handle recurrence or mark as completed
@@ -2019,23 +2036,31 @@ async function checkReminders() {
 
         // Clean up old notification keys (older than 24 hours)
         const oneDayAgo = nowTimestamp - (24 * 60 * 60 * 1000);
-        for (const key of notifiedReminders) {
-            // Simple cleanup - clear the set if it gets too large
-            if (notifiedReminders.size > 1000) {
-                notifiedReminders.clear();
-                break;
+        
+        // Remove entries older than 24 hours
+        for (const [key, timestamp] of notifiedReminders.entries()) {
+            if (timestamp < oneDayAgo) {
+                notifiedReminders.delete(key);
             }
+        }
+        
+        // If map still too large, clear oldest entries
+        if (notifiedReminders.size > NOTIFICATION_CLEANUP_SIZE) {
+            const entries = Array.from(notifiedReminders.entries())
+                .sort((a, b) => a[1] - b[1]); // Sort by timestamp
+            
+            // Keep only the most recent half
+            const toKeep = entries.slice(entries.length / 2);
+            notifiedReminders.clear();
+            toKeep.forEach(([key, timestamp]) => notifiedReminders.set(key, timestamp));
+            
+            console.log(`Cleaned up notification cache: kept ${notifiedReminders.size} recent entries`);
         }
 
     } catch (err) {
         console.error("Error checking reminders:", err);
     }
 }
-
-// Schedule reminder checks every minute
-cron.schedule('* * * * *', () => {
-    checkReminders();
-});
 
 // ───────────────────────────────────────────────
 // START BOT
