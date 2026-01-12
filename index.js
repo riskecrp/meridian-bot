@@ -19,6 +19,9 @@ const GOOGLE_CLIENT_EMAIL = process.env.GOOGLE_CLIENT_EMAIL;
 const GOOGLE_PRIVATE_KEY = process.env.GOOGLE_PRIVATE_KEY.replace(/\\n/g, "\n");
 const GOOGLE_SHEET_ID = process.env.GOOGLE_SHEET_ID;
 
+// ROLE IDS
+const FACTION_MANAGEMENT_ROLE_ID = "1457229857749729363";
+
 // GOOGLE AUTH
 const auth = new google.auth.JWT(
     GOOGLE_CLIENT_EMAIL,
@@ -607,6 +610,13 @@ function getUserHighestRole(interaction, roleNames) {
         }
     }
     return null;
+}
+
+// Check if user has specific role by ID
+function hasRoleById(interaction, roleId) {
+    const memberRoles = interaction.member?.roles?.cache;
+    if (!memberRoles) return false;
+    return memberRoles.some(r => r.id === roleId);
 }
 
 // ───────────────────────────────────────────────
@@ -1447,12 +1457,12 @@ client.on("interactionCreate", async interaction => {
     // ────────────────────────────────────────────────────────────
 
     // ────────────────
-    // /setreminder (Team Leader, Management, OR Team Guide)
+    // /setreminder ([ECRP] Faction Management only)
     // ────────────────
     if (interaction.commandName === "setreminder") {
-        if (!hasRequiredRole(interaction, ["Team Leader", "Management", "Team Guide"])) {
+        if (!hasRoleById(interaction, FACTION_MANAGEMENT_ROLE_ID)) {
             return interaction.reply({ 
-                content: "You do not have permission to run this command. (Requires Team Leader, Management, or Team Guide role)", 
+                content: "You do not have permission to run this command. (Requires [ECRP] Faction Management role)", 
                 ephemeral: true 
             });
         }
@@ -1466,7 +1476,10 @@ client.on("interactionCreate", async interaction => {
         const timezone = interaction.options.getString("timezone") || "UTC";
         const visibility = interaction.options.getString("visibility") || "private";
         const creator = interaction.user.username;
-        const creatorRole = getUserHighestRole(interaction, ["Management", "Team Leader", "Team Guide"]) || "Unknown";
+        // Get the [ECRP] Faction Management role name if user has it
+        const memberRoles = interaction.member?.roles?.cache;
+        const factionMgmtRole = memberRoles?.find(r => r.id === FACTION_MANAGEMENT_ROLE_ID);
+        const creatorRole = factionMgmtRole ? factionMgmtRole.name : "Unknown";
 
         try {
             await interaction.deferReply({ ephemeral: true });
@@ -1519,14 +1532,22 @@ client.on("interactionCreate", async interaction => {
     }
 
     // ────────────────
-    // /listreminders (Public access with visibility rules)
+    // /listreminders ([ECRP] Faction Management only)
     // ────────────────
     if (interaction.commandName === "listreminders") {
+        if (!hasRoleById(interaction, FACTION_MANAGEMENT_ROLE_ID)) {
+            return interaction.reply({ 
+                content: "You do not have permission to run this command. (Requires [ECRP] Faction Management role)", 
+                ephemeral: true 
+            });
+        }
+
         const username = interaction.user.username;
-        const userRole = getUserHighestRole(interaction, ["Management", "Team Leader", "Team Guide"]);
+        const memberRoles = interaction.member?.roles?.cache;
+        const factionMgmtRole = memberRoles?.find(r => r.id === FACTION_MANAGEMENT_ROLE_ID);
+        const userRole = factionMgmtRole ? factionMgmtRole.name : null;
         
         // Get all user's roles
-        const memberRoles = interaction.member?.roles?.cache;
         const userRoleNames = memberRoles ? Array.from(memberRoles.values()).map(r => r.name) : [];
 
         try {
@@ -1713,13 +1734,13 @@ client.on("interactionCreate", async interaction => {
                     name: "⏰ **Reminders**",
                     value: 
                         `**\`/setreminder\`** - Create a reminder\n` +
-                        `• Roles: Team Leader, Management, Team Guide\n` +
+                        `• Roles: [ECRP] Faction Management\n` +
                         `• Example: \`/setreminder text:Meeting time:14:00 date:2024-01-20 target_type:user target_value:JohnDoe\`\n` +
                         `• Select target (user or role) to specify who receives pings\n` +
                         `• Pings sent 30 minutes before and at event time\n` +
                         `• Supports one-time or recurring (daily/weekly/monthly)\n⠀\n` +
                         `**\`/listreminders\`** - View your reminders\n` +
-                        `• Roles: Everyone\n` +
+                        `• Roles: [ECRP] Faction Management\n` +
                         `• Shows reminders targeting you or your roles\n` +
                         `• Also shows reminders based on visibility (private/role/public)\n⠀`
                 },
