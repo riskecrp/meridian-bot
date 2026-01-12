@@ -192,9 +192,9 @@ export default {
 
                 // --- BUILD EXPLICIT LINKS ---
                 // Format: Label: [Link] OR ❌ Not Set
-                const feedbackStatus = row[4] ? `<:feedback:1099035227705573427> <#${row[4]}>` : "❌ **Feedback:** Not Set";
-                const forumStatus = row[5] ? `📄 [Forum Thread](${row[5]})` : "❌ **Forum:** Not Set";
-                const discordStatus = row[6] ? `💬 [Discord](${row[6]})` : "❌ **Discord:** Not Set";
+                const feedbackStatus = row[4] ? `<1099035227705573427> <#${row[4]}>` : "❌ **Feedback:** Not Set";
+                const forumStatus = row[5] ? `[Forum Thread](${row[5]})` : "❌ **Forum:** Not Set";
+                const discordStatus = row[6] ? `[Discord](${row[6]})` : "❌ **Discord:** Not Set";
 
                 const linkBlock = `${feedbackStatus}\n${forumStatus}\n${discordStatus}`;
 
