@@ -1,340 +1,113 @@
-import {
-    Client,
-    GatewayIntentBits,
-    REST,
-    Routes,
-    SlashCommandBuilder,
-    EmbedBuilder,
-    MessageFlags
-} from "discord.js";
-import { google } from "googleapis";
-import { DateTime } from "luxon";
-import cron from "node-cron";
+// index.js
+import fs from 'node:fs';
+import path from 'node:path';
+import { fileURLToPath } from 'url';
+import { Client, Collection, Events, GatewayIntentBits, REST, Routes } from 'discord.js';
+import dotenv from 'dotenv';
 
-// ───────────────────────────────────────────────
-// 1. CONFIGURATION & ENV
-// ───────────────────────────────────────────────
-const DISCORD_TOKEN = process.env.DISCORD_TOKEN;
-const CLIENT_ID = process.env.CLIENT_ID;
-const GUILD_ID = process.env.GUILD_ID;
-const GOOGLE_CLIENT_EMAIL = process.env.GOOGLE_CLIENT_EMAIL;
-const GOOGLE_PRIVATE_KEY = process.env.GOOGLE_PRIVATE_KEY?.replace(/\\n/g, "\n");
-const GOOGLE_SHEET_ID = process.env.GOOGLE_SHEET_ID;
+dotenv.config();
 
-const FACTION_MANAGEMENT_ROLE_ID = "1457229857749729363";
-const FM_MANAGEMENT_ROLE_NAME = "[ECRP] FM Management";
-const TEAM_LEAD_ROLE_NAME = "Team Lead";
+// Setup Paths
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
 
-const REMINDER_HEADERS = [
-    "Reminder Text", "Input Time", "Input Date", "Input Timezone", 
-    "UTC Time", "UTC Date", "Recurrence", "Creator", "Creator Role", 
-    "Visibility", "Target Type", "Target Value", "Status", "Channel ID", "Channel Name"
-];
-
-// ───────────────────────────────────────────────
-// 2. GOOGLE SHEETS AUTH
-// ───────────────────────────────────────────────
-const auth = new google.auth.JWT(
-    GOOGLE_CLIENT_EMAIL, null, GOOGLE_PRIVATE_KEY, 
-    ["https://www.googleapis.com/auth/spreadsheets"]
-);
-const sheets = google.sheets({ version: "v4", auth });
-
-// ───────────────────────────────────────────────
-// 3. DISCORD CLIENT
-// ───────────────────────────────────────────────
+// Initialize Client
 const client = new Client({
-    intents: [
-        GatewayIntentBits.Guilds,
-        GatewayIntentBits.GuildMembers, 
-        GatewayIntentBits.GuildMessages
-    ]
+    intents: [GatewayIntentBits.Guilds]
 });
 
-// ───────────────────────────────────────────────
-// 4. UTILITIES
-// ───────────────────────────────────────────────
+// Collection to hold commands
+client.commands = new Collection();
 
-/**
- * Resolves a target string into a mention.
- * FIX: Detects if the string is ALREADY a ping (<@...>) and returns it as-is.
- */
-async function resolvePing(guild, type, value) {
-    if (!value) return "@Unknown";
-    const raw = value.trim();
+// 1. LOAD COMMANDS
+const commandsPath = path.join(__dirname, 'commands');
+// Ensure commands folder exists
+if (!fs.existsSync(commandsPath)) {
+    fs.mkdirSync(commandsPath);
+}
 
-    // 1. If it looks like <@12345...> or <@&12345...>, IT IS ALREADY A PING.
-    // Return immediately. Do not add @.
-    if (raw.startsWith('<') && raw.endsWith('>')) {
-        return raw;
+const commandFiles = fs.readdirSync(commandsPath).filter(file => file.endsWith('.js'));
+const commandsToRegister = [];
+
+console.log(`[SYSTEM] Loading ${commandFiles.length} commands...`);
+
+for (const file of commandFiles) {
+    const filePath = path.join(commandsPath, file);
+    // Dynamic import for ES Modules
+    const command = await import(pathToFileURL(filePath).href);
+
+    if ('data' in command.default && 'execute' in command.default) {
+        client.commands.set(command.default.data.name, command.default);
+        commandsToRegister.push(command.default.data.toJSON());
+        console.log(`  -> Loaded: ${command.default.data.name}`);
+    } else {
+        console.log(`[WARNING] The command at ${filePath} is missing a required "data" or "execute" property.`);
     }
+}
 
-    // 2. Clean the input for searching (remove @ temporarily)
-    const cleanValue = raw.replace(/^@+/, '').toLowerCase();
-    
+// Helper for Windows/Linux path compatibility in imports
+function pathToFileURL(path) {
+    return new URL('file://' + path);
+}
+
+// 2. DEPLOY COMMANDS (Register with Discord)
+const rest = new REST().setToken(process.env.DISCORD_TOKEN);
+
+(async () => {
     try {
-        if (type === "role") {
-            const roles = await guild.roles.fetch();
-            const role = roles.find(r => r.name.toLowerCase() === cleanValue);
-            if (role) return `<@&${role.id}>`;
-        } else {
-            const members = await guild.members.fetch();
-            const member = members.find(m => m.user.username.toLowerCase() === cleanValue);
-            if (member) return `<@${member.id}>`;
-        }
-    } catch (e) { 
-        console.error("Ping Resolution Error:", e.message);
+        console.log(`[SYSTEM] Refreshing ${commandsToRegister.length} application (/) commands.`);
+        const data = await rest.put(
+            Routes.applicationGuildCommands(process.env.CLIENT_ID, process.env.GUILD_ID),
+            { body: commandsToRegister },
+        );
+        console.log(`[SYSTEM] Successfully registered ${data.length} commands.`);
+    } catch (error) {
+        console.error(error);
     }
+})();
 
-    // 3. Fallback: If search failed, just assume user wants text.
-    // Ensure we don't double add @ if they typed it.
-    return raw.startsWith('@') ? raw : `@${raw}`;
-}
-
-function convertToUTC(date, time, timezone) {
-    const paddedTime = time.includes(":") && time.length < 5 ? time.padStart(5, "0") : time;
-    const dt = DateTime.fromFormat(`${date} ${paddedTime}`, "yyyy-MM-dd HH:mm", { zone: timezone });
-    if (!dt.isValid) return null;
-    const utcDt = dt.toUTC();
-    return { utcDate: utcDt.toFormat("yyyy-MM-dd"), utcTime: utcDt.toFormat("HH:mm") };
-}
-
-async function ensureSheetTab(tabName, headers = []) {
-    try {
-        const info = await sheets.spreadsheets.get({ spreadsheetId: GOOGLE_SHEET_ID });
-        if (!info.data.sheets.some(s => s.properties.title === tabName)) {
-            await sheets.spreadsheets.batchUpdate({
-                spreadsheetId: GOOGLE_SHEET_ID,
-                requestBody: { requests: [{ addSheet: { properties: { title: tabName } } }] }
-            });
-            if (headers.length > 0) {
-                await sheets.spreadsheets.values.update({
-                    spreadsheetId: GOOGLE_SHEET_ID, range: `${tabName}!A1`,
-                    valueInputOption: "USER_ENTERED", requestBody: { values: [headers] }
-                });
-            }
-        }
-    } catch (e) { console.error(`Sheet Tab Error (${tabName}):`, e.message); }
-}
-
-// ───────────────────────────────────────────────
-// 5. SLASH COMMANDS
-// ───────────────────────────────────────────────
-const commands = [
-    new SlashCommandBuilder().setName("factioninfo").setDescription("Lookup intelligence data for a faction").addStringOption(o => o.setName("faction").setDescription("Faction name").setRequired(true).setAutocomplete(true)),
-    new SlashCommandBuilder().setName("scenecount").setDescription("View scene history (last 90 days)").addStringOption(o => o.setName("faction").setDescription("Faction name").setRequired(true).setAutocomplete(true)),
-    new SlashCommandBuilder().setName("logscene").setDescription("Log a scene execution").addStringOption(o => o.setName("scene_name").setDescription("Name of scene").setRequired(true).setAutocomplete(true)).addStringOption(o => o.setName("participants").setDescription("Factions involved").setRequired(true)),
-    new SlashCommandBuilder().setName("addnote").setDescription("Log a notable interaction").addStringOption(o => o.setName("faction").setDescription("Faction").setRequired(true).setAutocomplete(true)).addStringOption(o => o.setName("note").setDescription("Details").setRequired(true)),
-    new SlashCommandBuilder().setName("getnotes").setDescription("Retrieve notes").addStringOption(o => o.setName("faction").setDescription("Faction").setRequired(true).setAutocomplete(true)).addBooleanOption(o => o.setName("all").setDescription("Show all history")),
-    new SlashCommandBuilder().setName("help").setDescription("Show command directory"),
-    new SlashCommandBuilder().setName("listreminders").setDescription("View scheduled pings"),
+// 3. EVENT HANDLERS
+client.once(Events.ClientReady, c => {
+    console.log(`[SYSTEM] Ready! Logged in as ${c.user.tag}`);
+    client.user.setPresence({
+        activities: [{ name: "Waiting for associate request...", type: 3 }],
+        status: "online"
+    });
     
-    new SlashCommandBuilder().setName("adddossier").setDescription("Manage intel entries")
-        .addSubcommand(s => s.setName("person").setDescription("Add person").addStringOption(o => o.setName("faction").setDescription("Faction").setRequired(true).setAutocomplete(true)).addStringOption(o => o.setName("character").setDescription("Name").setRequired(true)).addStringOption(o => o.setName("phone").setDescription("Phone")).addStringOption(o => o.setName("personaladdress").setDescription("Address")).addBooleanOption(o => o.setName("leader").setDescription("Is Leader")))
-        .addSubcommand(s => s.setName("location").setDescription("Add location").addStringOption(o => o.setName("faction").setDescription("Faction").setRequired(true).setAutocomplete(true)).addStringOption(o => o.setName("address").setDescription("Address").setRequired(true)).addBooleanOption(o => o.setName("is_hq").setDescription("Is HQ").setRequired(true))),
-    
-    new SlashCommandBuilder().setName("addproperty").setDescription("Log property reward").addStringOption(o => o.setName("date").setDescription("Date").setRequired(true)).addStringOption(o => o.setName("faction").setDescription("Faction").setRequired(true).setAutocomplete(true)).addStringOption(o => o.setName("address").setDescription("Address").setRequired(true)).addStringOption(o => o.setName("type").setDescription("Type").setRequired(true).addChoices({name:"HQ",value:"HQ"},{name:"Warehouse",value:"Warehouse"},{name:"Property",value:"Property"})).addBooleanOption(o => o.setName("confiscated").setDescription("Confiscated").setRequired(true)),
-    new SlashCommandBuilder().setName("listproperties").setDescription("List master property log"),
-    new SlashCommandBuilder().setName("confiscateproperty").setDescription("Mark property as confiscated").addStringOption(o => o.setName("date").setDescription("Date").setRequired(true)).addStringOption(o => o.setName("faction").setDescription("Faction").setRequired(true).setAutocomplete(true)).addStringOption(o => o.setName("address").setDescription("Address").setRequired(true)).addStringOption(o => o.setName("type").setDescription("Type").setRequired(true)).addBooleanOption(o => o.setName("confiscated").setDescription("Confirm").setRequired(true)),
-
-    new SlashCommandBuilder().setName("setreminder").setDescription("Set a timezone-aware reminder")
-        .addStringOption(o => o.setName("text").setDescription("Content").setRequired(true))
-        .addStringOption(o => o.setName("time").setDescription("HH:MM (24h)").setRequired(true))
-        .addStringOption(o => o.setName("date").setDescription("YYYY-MM-DD").setRequired(true))
-        .addChannelOption(o => o.setName("channel").setDescription("Where to ping").addChannelTypes(0).setRequired(true))
-        .addStringOption(o => o.setName("target_type").setDescription("User or Role").setRequired(true).addChoices({name:"User", value:"user"},{name:"Role", value:"role"}))
-        .addStringOption(o => o.setName("target_value").setDescription("Username or Role Name").setRequired(true))
-        .addStringOption(o => o.setName("recurrence").setDescription("Pattern").addChoices({name:"None", value:"none"},{name:"Daily", value:"daily"},{name:"Weekly", value:"weekly"},{name:"Monthly", value:"monthly"}))
-        .addStringOption(o => o.setName("timezone").setDescription("Your Timezone (e.g. America/New_York) - Default: UTC"))
-];
-
-// ───────────────────────────────────────────────
-// 6. INITIALIZATION & CRON
-// ───────────────────────────────────────────────
-client.once("clientReady", async () => {
-    try {
-        const rest = new REST({ version: "10" }).setToken(DISCORD_TOKEN);
-        await rest.put(Routes.applicationGuildCommands(CLIENT_ID, GUILD_ID), { body: commands });
-        console.log(`[SYSTEM] Meridian Bot Online (${client.user.tag})`);
-        
-        cron.schedule("* * * * *", () => {
-            console.log(`[CRON] Tick.`);
-            checkReminders();
-        });
-    } catch (e) { console.error("Startup Error:", e); }
+    // Start your Cron/Tick here if you have one
+    setInterval(() => console.log('[CRON] Tick.'), 60000); 
 });
 
-// ───────────────────────────────────────────────
-// 7. INTERACTION HANDLER
-// ───────────────────────────────────────────────
-client.on("interactionCreate", async interaction => {
-    if (interaction.isAutocomplete()) return interaction.respond([]);
-    if (!interaction.isChatInputCommand()) return;
-
-    const isFM = interaction.member.roles.cache.has(FACTION_MANAGEMENT_ROLE_ID);
-    const isMgt = interaction.member.roles.cache.some(r => r.name === FM_MANAGEMENT_ROLE_NAME);
-    const isTL = interaction.member.roles.cache.some(r => r.name === TEAM_LEAD_ROLE_NAME);
-
-    // Permission Gates
-    const fmCmds = ["factioninfo", "scenecount", "help", "logscene", "addnote", "getnotes", "setreminder", "listreminders"];
-    if (fmCmds.includes(interaction.commandName) && !isFM) return interaction.reply({ content: "❌ Unauthorized: FM Role Required.", flags: MessageFlags.Ephemeral });
-    if (interaction.commandName === "adddossier" && !isTL) return interaction.reply({ content: "❌ Unauthorized: Team Lead Role Required.", flags: MessageFlags.Ephemeral });
-    if (["addproperty", "listproperties", "confiscateproperty"].includes(interaction.commandName) && !isMgt) return interaction.reply({ content: "❌ Unauthorized: FM Management Role Required.", flags: MessageFlags.Ephemeral });
-
-    // SET REMINDER
-    if (interaction.commandName === "setreminder") {
-        await interaction.deferReply({ flags: MessageFlags.Ephemeral });
-
-        const [text, time, date, channel, targetType, targetValue, recurrence, timezone] = [
-            interaction.options.getString("text"),
-            interaction.options.getString("time"),
-            interaction.options.getString("date"),
-            interaction.options.getChannel("channel"),
-            interaction.options.getString("target_type"),
-            interaction.options.getString("target_value"),
-            interaction.options.getString("recurrence") || "none",
-            interaction.options.getString("timezone") || "UTC"
-        ];
-
-        const utcData = convertToUTC(date, time, timezone);
-        if (!utcData) return interaction.editReply(`❌ **Invalid Time/Date/Timezone.**`);
+client.on(Events.InteractionCreate, async interaction => {
+    // Handle Chat Commands
+    if (interaction.isChatInputCommand()) {
+        const command = interaction.client.commands.get(interaction.commandName);
+        if (!command) return;
 
         try {
-            await ensureSheetTab("Reminders", REMINDER_HEADERS);
-            const res = await sheets.spreadsheets.values.get({ spreadsheetId: GOOGLE_SHEET_ID, range: "Reminders!A:A" });
-            const nextRow = (res.data.values || []).length + 1;
-
-            const values = [
-                text, time, date, timezone,                 
-                utcData.utcTime, utcData.utcDate,           
-                recurrence, interaction.user.username, "FM",
-                "public", targetType, targetValue,          
-                "active", channel.id, channel.name          
-            ];
-
-            await sheets.spreadsheets.values.update({
-                spreadsheetId: GOOGLE_SHEET_ID, range: `Reminders!A${nextRow}:O${nextRow}`,
-                valueInputOption: "USER_ENTERED", requestBody: { values: [values] }
-            });
-
-            return interaction.editReply(`✅ **Reminder Set!**\nTarget: ${targetValue}\nTime: ${date} ${time} (${timezone})\n(Stored as UTC: ${utcData.utcDate} ${utcData.utcTime})`);
-        } catch (e) {
-            console.error(e);
-            return interaction.editReply("❌ Database Error."); 
-        }
-    }
-
-    if (interaction.commandName === "help") return interaction.reply({ content: "Bot Online.", flags: MessageFlags.Ephemeral });
-});
-
-// ───────────────────────────────────────────────
-// 8. REMINDER ENGINE
-// ───────────────────────────────────────────────
-async function checkReminders() {
-    try {
-        const res = await sheets.spreadsheets.values.get({ 
-            spreadsheetId: GOOGLE_SHEET_ID, 
-            range: "Reminders!A2:O100" 
-        });
-        
-        const rows = res.data.values || [];
-        if (rows.length === 0) return;
-
-        const now = DateTime.now().setZone("UTC");
-        const guild = await client.guilds.fetch(GUILD_ID);
-
-        for (let i = 0; i < rows.length; i++) {
-            try {
-                const r = rows[i];
-                let status = r[12]?.trim().toLowerCase();
-                
-                // SKIPS COMPLETED ROWS
-                if (!r || !status || status === "completed") continue;
-
-                // Time Fix & Parse
-                let dateStr = r[5]?.trim();
-                let timeStr = r[4]?.trim();
-                if (timeStr && timeStr.indexOf(":") > -1 && timeStr.length < 5) timeStr = timeStr.padStart(5, "0");
-
-                const rDt = DateTime.fromISO(`${dateStr}T${timeStr}`, { zone: "UTC" });
-                if (!rDt.isValid) continue;
-
-                const diffMinutes = rDt.diff(now, 'minutes').minutes;
-                const chanId = r[13];
-                const channel = await guild.channels.fetch(chanId).catch(() => null);
-                if (!channel) continue;
-
-                // ─── 1. 30-MINUTE WARNING ───
-                if (status === "active" && diffMinutes <= 30 && diffMinutes > 20) {
-                    const mention = await resolvePing(guild, r[10], r[11]);
-                    
-                    const embed = new EmbedBuilder()
-                        .setColor(0xffa500)
-                        .setTitle("⏰ 30 Minute Reminder")
-                        .setDescription(`**Event:** ${r[0]}\n**Time:** <t:${Math.floor(rDt.toSeconds())}:R>`);
-
-                    await channel.send({ 
-                        content: `${mention}`, 
-                        embeds: [embed],
-                        allowedMentions: { parse: ['users', 'roles'] }
-                    });
-
-                    // Update Status
-                    await sheets.spreadsheets.values.update({
-                        spreadsheetId: GOOGLE_SHEET_ID, range: `Reminders!M${i + 2}`,
-                        valueInputOption: "USER_ENTERED", requestBody: { values: [["warned"]] }
-                    });
-                }
-
-                // ─── 2. FINAL ALERT ───
-                if (diffMinutes <= 0 && diffMinutes > -10) {
-                    const mention = await resolvePing(guild, r[10], r[11]);
-
-                    const embed = new EmbedBuilder()
-                        .setColor(0xff0000)
-                        .setTitle("🔔 Last Reminder")
-                        .setDescription(`**Happening Now:** ${r[0]}`);
-
-                    await channel.send({ 
-                        content: `${mention}`, 
-                        embeds: [embed],
-                        allowedMentions: { parse: ['users', 'roles'] }
-                    });
-
-                    // ─── MARK COMPLETED ───
-                    const recurrence = r[6]?.toLowerCase();
-                    
-                    if (recurrence === "none" || !recurrence) {
-                        await sheets.spreadsheets.values.update({
-                            spreadsheetId: GOOGLE_SHEET_ID, range: `Reminders!M${i + 2}`,
-                            valueInputOption: "USER_ENTERED", 
-                            requestBody: { values: [["completed"]] }
-                        });
-                    } else {
-                        // UPDATE RECURRENCE
-                        let nextDt = rDt;
-                        if (recurrence === "daily") nextDt = rDt.plus({ days: 1 });
-                        if (recurrence === "weekly") nextDt = rDt.plus({ weeks: 1 });
-                        if (recurrence === "monthly") nextDt = rDt.plus({ months: 1 });
-
-                        await sheets.spreadsheets.values.update({
-                            spreadsheetId: GOOGLE_SHEET_ID, range: `Reminders!E${i + 2}:F${i + 2}`,
-                            valueInputOption: "USER_ENTERED", 
-                            requestBody: { values: [[nextDt.toFormat("HH:mm"), nextDt.toFormat("yyyy-MM-dd")]] }
-                        });
-                        await sheets.spreadsheets.values.update({
-                            spreadsheetId: GOOGLE_SHEET_ID, range: `Reminders!M${i + 2}`,
-                            valueInputOption: "USER_ENTERED", 
-                            requestBody: { values: [["active"]] }
-                        });
-                    }
-                }
-
-            } catch (err) {
-                console.error(`[ROW ERROR] Index ${i}:`, err.message);
+            await command.execute(interaction);
+        } catch (error) {
+            console.error(error);
+            if (interaction.replied || interaction.deferred) {
+                await interaction.followUp({ content: 'There was an error executing this command!', ephemeral: true });
+            } else {
+                await interaction.reply({ content: 'There was an error executing this command!', ephemeral: true });
             }
         }
-    } catch (e) { console.error("[CRON FATAL]", e.message); }
-}
+    } 
+    // Handle Autocomplete
+    else if (interaction.isAutocomplete()) {
+        const command = interaction.client.commands.get(interaction.commandName);
+        if (!command) return;
 
-client.login(DISCORD_TOKEN);
+        try {
+            if (command.autocomplete) {
+                await command.autocomplete(interaction);
+            }
+        } catch (error) {
+            console.error(error);
+        }
+    }
+});
+
+client.login(process.env.DISCORD_TOKEN);
