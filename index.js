@@ -177,34 +177,6 @@ const confiscatePropertyCmd = new SlashCommandBuilder()
 // NEW COMMANDS: One-Off Scenes
 // ───────────────────────────────────────────────
 
-const addSceneCmd = new SlashCommandBuilder()
-    .setName("addscene")
-    .setDescription("Add a new one-off scene to the database.")
-    .addStringOption(o =>
-        o.setName("scene_name")
-            .setDescription("Name of the scene")
-            .setRequired(true)
-    )
-    .addStringOption(o =>
-        o.setName("meridian_or_ped")
-            .setDescription("Meridian or Ped")
-            .setRequired(true)
-            .addChoices(
-                { name: "Meridian", value: "Meridian" },
-                { name: "Ped", value: "Ped" }
-            )
-    )
-    .addStringOption(o =>
-        o.setName("scene_info")
-            .setDescription("Scene information/description")
-            .setRequired(true)
-    )
-    .addStringOption(o =>
-        o.setName("rewards")
-            .setDescription("Rewards for the scene")
-            .setRequired(true)
-    );
-
 const logSceneCmd = new SlashCommandBuilder()
     .setName("logscene")
     .setDescription("Log execution of a scene with updated metadata.")
@@ -229,10 +201,6 @@ const sceneCountCmd = new SlashCommandBuilder()
             .setRequired(true)
             .setAutocomplete(true)
     );
-
-const listScenesCmd = new SlashCommandBuilder()
-    .setName("listscenes")
-    .setDescription("List all available one-off scenes with run counts and participating factions.");
 
 // ───────────────────────────────────────────────
 // NEW COMMANDS: Notable Interactions
@@ -346,10 +314,8 @@ async function deployCommands() {
                     listPropertiesCmd.toJSON(), 
                     addDossierCmd.toJSON(), 
                     confiscatePropertyCmd.toJSON(),
-                    addSceneCmd.toJSON(),
                     logSceneCmd.toJSON(),
                     sceneCountCmd.toJSON(),
-                    listScenesCmd.toJSON(),
                     addNoteCmd.toJSON(),
                     getNotesCmd.toJSON(),
                     setReminderCmd.toJSON(),
@@ -1086,68 +1052,6 @@ client.on("interactionCreate", async interaction => {
     // ────────────────────────────────────────────────────────────
 
     // ────────────────
-    // /addscene (Team Leader OR Management)
-    // ────────────────
-    if (interaction.commandName === "addscene") {
-        if (!hasRequiredRole(interaction, ["Team Leader", "Management"])) {
-            return interaction.reply({ 
-                content: "You do not have permission to run this command. (Requires Team Leader or Management role)", 
-                ephemeral: true 
-            });
-        }
-
-        const sceneName = interaction.options.getString("scene_name");
-        const meridianOrPed = interaction.options.getString("meridian_or_ped");
-        const sceneInfo = interaction.options.getString("scene_info");
-        const rewards = interaction.options.getString("rewards");
-
-        try {
-            await interaction.deferReply({ ephemeral: true });
-
-            // Ensure the tab exists with updated headers
-            await ensureSheetTab("One Off Scenes", [
-                "Scene Name", "Meridian or Ped", "Scene Info", "Rewards", "Times Run", "Participants", "Last Run Date"
-            ]);
-
-            // Check for duplicates
-            const res = await sheets.spreadsheets.values.get({
-                spreadsheetId: GOOGLE_SHEET_ID,
-                range: "One Off Scenes!A:A"
-            });
-
-            const existingScenes = (res.data.values || []).slice(1).map(row => row[0]?.toLowerCase().trim());
-            
-            if (existingScenes.includes(sceneName.toLowerCase().trim())) {
-                return interaction.editReply({ content: `❌ Scene "${sceneName}" already exists.` });
-            }
-
-            // Add the scene with new fields
-            const nextRow = await findNextRowInTab("One Off Scenes", "A");
-            await sheets.spreadsheets.values.update({
-                spreadsheetId: GOOGLE_SHEET_ID,
-                range: `One Off Scenes!A${nextRow}:G${nextRow}`,
-                valueInputOption: "USER_ENTERED",
-                requestBody: {
-                    values: [[sceneName, meridianOrPed, sceneInfo, rewards, 0, "", ""]]
-                }
-            });
-
-            // Refresh scene cache
-            await loadScenes();
-
-            return interaction.editReply({ content: `✅ Scene "${sceneName}" added successfully.` });
-
-        } catch (err) {
-            console.error("ADDSCENE ERROR:", err);
-            try {
-                return interaction.editReply({ content: "There was an error updating the Google Sheet." });
-            } catch (e) {
-                return interaction.followUp({ content: "There was an error updating the Google Sheet.", ephemeral: true });
-            }
-        }
-    }
-
-    // ────────────────
     // /logscene (Team Leader, Management, OR Team Guide)
     // ────────────────
     if (interaction.commandName === "logscene") {
@@ -1352,138 +1256,6 @@ client.on("interactionCreate", async interaction => {
 
         } catch (err) {
             console.error("SCENECOUNT ERROR:", err);
-            return interaction.reply({ 
-                content: "There was an error accessing the Google Sheet.", 
-                ephemeral: true 
-            });
-        }
-    }
-
-    // ────────────────
-    // /listscenes (Public access)
-    // ────────────────
-    if (interaction.commandName === "listscenes") {
-        try {
-            // Check if tab exists
-            const sheetInfo = await sheets.spreadsheets.get({
-                spreadsheetId: GOOGLE_SHEET_ID
-            });
-            
-            const tabExists = sheetInfo.data.sheets.some(s => s.properties.title === "One Off Scenes");
-            
-            if (!tabExists) {
-                const embedEmpty = new EmbedBuilder()
-                    .setColor(0x2b6cb0)
-                    .setTitle(
-                        `━━━━━━━━━━━━━━━━━━━━━━━━━━\n` +
-                        `🎭  **ALL ONE-OFF SCENES**\n` +
-                        `━━━━━━━━━━━━━━━━━━━━━━━━━━`
-                    )
-                    .addFields({ name: "⠀", value: "_No scenes found._" });
-
-                return interaction.reply({ embeds: [embedEmpty] });
-            }
-
-            // Get all scene data
-            const res = await sheets.spreadsheets.values.get({
-                spreadsheetId: GOOGLE_SHEET_ID,
-                range: "One Off Scenes!A:G"
-            });
-
-            const rows = res.data.values || [];
-            
-            if (rows.length <= 1) {
-                const embedEmpty = new EmbedBuilder()
-                    .setColor(0x2b6cb0)
-                    .setTitle(
-                        `━━━━━━━━━━━━━━━━━━━━━━━━━━\n` +
-                        `🎭  **ALL ONE-OFF SCENES**\n` +
-                        `━━━━━━━━━━━━━━━━━━━━━━━━━━`
-                    )
-                    .addFields({ name: "⠀", value: "_No scenes available._" });
-
-                return interaction.reply({ embeds: [embedEmpty] });
-            }
-
-            // Process all scenes
-            const sceneList = [];
-            const MAX_FIELD_LENGTH = 200; // Discord embed field safe length
-            const TRUNCATE_LENGTH = 197; // Leave room for "..."
-            
-            for (let i = 1; i < rows.length; i++) {
-                const row = rows[i];
-                if (!row || row.length === 0) continue; // Skip empty rows
-                
-                const sceneName = row[0] || "Unknown Scene";
-                const meridianOrPed = row[1] || "N/A";
-                
-                // Truncate long text fields to prevent Discord embed limits
-                const rawSceneInfo = row[2] || "N/A";
-                const sceneInfo = rawSceneInfo.length > MAX_FIELD_LENGTH 
-                    ? rawSceneInfo.substring(0, TRUNCATE_LENGTH) + "..." 
-                    : rawSceneInfo;
-                
-                const rawRewards = row[3] || "N/A";
-                const rewards = rawRewards.length > MAX_FIELD_LENGTH 
-                    ? rawRewards.substring(0, TRUNCATE_LENGTH) + "..." 
-                    : rawRewards;
-                
-                const timesRun = parseInt(row[4] || "0", 10);
-                const participants = row[5] || "";
-                
-                // Get unique factions from participants
-                const participantList = participants.split(',').map(p => p.trim()).filter(p => p);
-                const uniqueFactions = [...new Set(participantList)];
-                const factionsList = uniqueFactions.length > 0 
-                    ? uniqueFactions.join(", ") 
-                    : "_No runs yet_";
-                
-                sceneList.push({
-                    name: sceneName,
-                    type: meridianOrPed,
-                    info: sceneInfo,
-                    rewards: rewards,
-                    timesRun: timesRun,
-                    factions: factionsList
-                });
-            }
-
-            // Sort by times run (descending) then by name
-            sceneList.sort((a, b) => {
-                if (b.timesRun !== a.timesRun) {
-                    return b.timesRun - a.timesRun;
-                }
-                return a.name.localeCompare(b.name);
-            });
-
-            // Build scene display lines with all information
-            const lines = sceneList.map(scene => 
-                `**${scene.name}** (${scene.type})\n` +
-                `• Scene Info: ${scene.info}\n` +
-                `• Rewards: ${scene.rewards}\n` +
-                `• Times Run: ${scene.timesRun}\n` +
-                `• Factions: ${scene.factions}\n⠀`
-            );
-
-            // Chunk into fields
-            const fieldValues = chunkLinesToFieldValues(lines, 1024);
-            const fields = fieldValues.map(v => ({ name: "⠀", value: v }));
-
-            const embed = new EmbedBuilder()
-                .setColor(0x2b6cb0)
-                .setTitle(
-                    `━━━━━━━━━━━━━━━━━━━━━━━━━━\n` +
-                    `🎭  **ALL ONE-OFF SCENES**\n` +
-                    `**Total: ${sceneList.length} scene(s)**\n` +
-                    `━━━━━━━━━━━━━━━━━━━━━━━━━━`
-                )
-                .addFields(fields)
-                .setFooter({ text: "Sorted by times run" });
-
-            return interaction.reply({ embeds: [embed] });
-
-        } catch (err) {
-            console.error("LISTSCENES ERROR:", err);
             return interaction.reply({ 
                 content: "There was an error accessing the Google Sheet.", 
                 ephemeral: true 
@@ -1888,19 +1660,13 @@ client.on("interactionCreate", async interaction => {
                 {
                     name: "🎭 **One-Off Scenes**",
                     value: 
-                        `**\`/addscene\`** - Create a new scene\n` +
-                        `• Roles: Team Leader, Management\n` +
-                        `• Example: \`/addscene scene_name:Bank Heist meridian_or_ped:Meridian\`\n⠀\n` +
                         `**\`/logscene\`** - Log a scene execution\n` +
                         `• Roles: Team Leader, Management, Team Guide\n` +
                         `• Example: \`/logscene scene_name:Bank Heist participants:LSPD, EMS\`\n⠀\n` +
                         `**\`/scenecount\`** - View faction's scene history\n` +
                         `• Roles: Everyone\n` +
                         `• Example: \`/scenecount faction:LSPD\`\n` +
-                        `• Shows all scenes from last 90 days with run counts\n⠀\n` +
-                        `**\`/listscenes\`** - List all available scenes\n` +
-                        `• Roles: Everyone\n` +
-                        `• Shows all scenes with run counts and participating factions\n⠀`
+                        `• Shows all scenes from last 90 days with run counts\n⠀`
                 },
                 {
                     name: "💬 **Notable Interactions**",
