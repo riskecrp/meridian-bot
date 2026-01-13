@@ -149,17 +149,21 @@ export default {
                 return submission.editReply(`✅ Logged to Sheets, but ❌ **Could not find Thread** <#${result.threadId}>.`);
             }
 
-            // Construct the Tag
-            const ping = result.roleId ? `cc: <@&${result.roleId}>` : `cc: (No Team Assigned)`;
+            // --- PING LOGIC ---
+            // Construct the ping string explicitly. 
+            // NOTE: If the role is not mentionable, the bot needs Administrator permissions or the role must be set to "Allow anyone to @mention"
+            const pingMessage = result.roleId ? `**New Feedback Received** cc: <@&${result.roleId}>` : `**New Feedback Received** (No Team Assigned)`;
 
-            // Safety Truncation for Rewards Field (Limit is 1024)
+            // Safety Truncation
             const safeRewards = rewards.length > 1000 ? rewards.substring(0, 1000) + "..." : rewards;
+            
+            // Description limit is 4096, Fields are 1024
+            const safeFeedback = feedback.length > 4000 ? feedback.substring(0, 4000) + "..." : feedback;
 
             const embed = new EmbedBuilder()
                 .setTitle(`📝 Scene Feedback: ${result.name}`)
                 .setColor(0xFFA500)
-                // FEEDBACK IS NOW IN DESCRIPTION (Allows 4096 chars)
-                .setDescription(`**Feedback**\n${feedback}`)
+                .setDescription(`**Feedback**\n${safeFeedback}`)
                 .addFields(
                     { name: "Rewards Issued", value: safeRewards, inline: false }
                 )
@@ -167,8 +171,9 @@ export default {
                 .setTimestamp();
 
             await thread.send({ 
-                content: `**New Feedback Received** ${ping}`, 
-                embeds: [embed] 
+                content: pingMessage, // <--- This is what triggers the notification
+                embeds: [embed],
+                allowedMentions: { parse: ['roles'] } // <--- FORCE Discord to parse the role mention
             });
 
             await submission.editReply(`✅ **Success!** Feedback posted in <#${result.threadId}> and logged to sheet.`);
@@ -176,7 +181,7 @@ export default {
         } catch (err) {
             console.error("Feedback Error:", err);
             if (!interaction.replied) {
-               // Silently catch timeout to prevent double reply crashes
+               // Silently catch timeout
             }
         }
     }
