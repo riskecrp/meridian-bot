@@ -84,7 +84,7 @@ export function startScheduler(client) {
                             );
 
                             await channel.send({ 
-                                content: `🚨 ${targetPing}`, 
+                                content: `${targetPing}`, 
                                 embeds: [embed], 
                                 components: [buttons] 
                             });
