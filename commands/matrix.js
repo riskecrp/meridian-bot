@@ -1,7 +1,7 @@
 import { SlashCommandBuilder, EmbedBuilder } from "discord.js";
 import { sheets, GOOGLE_SHEET_ID } from "../utils/googleClient.js";
 
-// --- HELPER: Get Date as DD/MON/YYYY ---
+// --- HELPER: Get Date ---
 function getTodayDate() {
     const date = new Date();
     const day = String(date.getDate()).padStart(2, '0');
@@ -10,73 +10,42 @@ function getTodayDate() {
     return `${day}/${month}/${year}`;
 }
 
-// --- HELPER: Parse DD/MON/YYYY to Date Object ---
+// --- HELPER: Parse Date ---
 function parseLogDate(dateStr) {
     if (!dateStr) return null;
-    
     const parts = dateStr.split('/');
-    if (parts.length !== 3) return null; // Must be DD/MON/YYYY
-
-    const day = parseInt(parts[0], 10);
-    const monthStr = parts[1].toUpperCase();
-    const year = parseInt(parts[2], 10);
-
-    const monthMap = {
-        "JAN": 0, "FEB": 1, "MAR": 2, "APR": 3, "MAY": 4, "JUN": 5,
-        "JUL": 6, "AUG": 7, "SEP": 8, "OCT": 9, "NOV": 10, "DEC": 11
-    };
-
-    const monthIndex = monthMap[monthStr];
-
-    // If month is invalid or parse failed, return null
-    if (monthIndex === undefined || isNaN(day) || isNaN(year)) return null;
-
-    return new Date(year, monthIndex, day);
+    if (parts.length !== 3) return null;
+    const monthMap = { "JAN": 0, "FEB": 1, "MAR": 2, "APR": 3, "MAY": 4, "JUN": 5, "JUL": 6, "AUG": 7, "SEP": 8, "OCT": 9, "NOV": 10, "DEC": 11 };
+    return new Date(parseInt(parts[2], 10), monthMap[parts[1].toUpperCase()], parseInt(parts[0], 10));
 }
 
 // --- HELPER: Get Faction Names ---
 async function getFactionDataNames() {
     try {
-        const res = await sheets.spreadsheets.values.get({
-            spreadsheetId: GOOGLE_SHEET_ID,
-            range: "FactionData!A2:A999"
-        });
+        const res = await sheets.spreadsheets.values.get({ spreadsheetId: GOOGLE_SHEET_ID, range: "FactionData!A2:A999" });
         return (res.data.values || []).flat().map(f => f.trim()).filter(f => f);
-    } catch (err) {
-        console.error("Error fetching names:", err);
-        return [];
-    }
+    } catch (err) { return []; }
 }
 
-// --- HELPER: Find Row Number ---
+// --- HELPER: Find Row ---
 async function findFactionRow(sheetName, factionName) {
     try {
-        const res = await sheets.spreadsheets.values.get({
-            spreadsheetId: GOOGLE_SHEET_ID,
-            range: `${sheetName}!A:A`,
-        });
+        const res = await sheets.spreadsheets.values.get({ spreadsheetId: GOOGLE_SHEET_ID, range: `${sheetName}!A:A` });
         const rows = res.data.values || [];
         const target = factionName.toLowerCase().trim();
         for (let i = 0; i < rows.length; i++) {
             if (rows[i][0]?.toLowerCase().trim() === target) return i + 1;
         }
         return null;
-    } catch (err) {
-        console.error(`Error searching ${sheetName}:`, err);
-        return null;
-    }
+    } catch (err) { return null; }
 }
 
 // --- HELPER: Get Sheet ID ---
 async function getSheetId(title) {
     try {
         const res = await sheets.spreadsheets.get({ spreadsheetId: GOOGLE_SHEET_ID });
-        const sheet = res.data.sheets.find(s => s.properties.title === title);
-        return sheet ? sheet.properties.sheetId : null;
-    } catch (err) {
-        console.error("Error getting sheet ID:", err);
-        return null;
-    }
+        return res.data.sheets.find(s => s.properties.title === title)?.properties.sheetId;
+    } catch (err) { return null; }
 }
 
 export default {
@@ -84,27 +53,21 @@ export default {
         .setName("matrix")
         .setDescription("Faction Management System")
         // 1. CREATE
-        .addSubcommand(sub =>
-            sub.setName("create")
-                .setDescription("Initialize a new faction.")
-                .addStringOption(o => o.setName("name").setDescription("Faction Name").setRequired(true))
-                .addUserOption(o => o.setName("lead").setDescription("Team Lead").setRequired(false))
-                .addIntegerOption(o => o.setName("tier").setDescription("Starting Tier").setMinValue(0).setMaxValue(9).setRequired(false))
-                .addStringOption(o => o.setName("feedback_thread").setDescription("Discord Forum Thread ID").setRequired(false))
-                .addStringOption(o => o.setName("forum_link").setDescription("Forum URL").setRequired(false))
-                .addStringOption(o => o.setName("discord_link").setDescription("Discord Invite URL").setRequired(false))
+        .addSubcommand(sub => sub.setName("create").setDescription("Initialize a new faction.")
+            .addStringOption(o => o.setName("name").setDescription("Faction Name").setRequired(true))
+            .addUserOption(o => o.setName("lead").setDescription("Team Lead").setRequired(false))
+            .addIntegerOption(o => o.setName("tier").setDescription("Starting Tier").setMinValue(0).setMaxValue(9).setRequired(false))
+            .addStringOption(o => o.setName("feedback_thread").setDescription("Discord Forum Thread ID").setRequired(false))
+            .addStringOption(o => o.setName("forum_link").setDescription("Forum URL").setRequired(false))
+            .addStringOption(o => o.setName("discord_link").setDescription("Discord Invite URL").setRequired(false))
         )
         // 2. VIEW FACTION
-        .addSubcommand(sub =>
-            sub.setName("view")
-                .setDescription("View clean faction dashboard & stats.")
-                .addStringOption(o => o.setName("name").setDescription("Faction Name").setRequired(true).setAutocomplete(true))
+        .addSubcommand(sub => sub.setName("view").setDescription("View clean faction dashboard & stats.")
+            .addStringOption(o => o.setName("name").setDescription("Faction Name").setRequired(true).setAutocomplete(true))
         )
-        // 3. VIEW TEAM
-        .addSubcommand(sub =>
-            sub.setName("viewteam")
-                .setDescription("View all factions assigned to a specific Team Lead.")
-                .addUserOption(o => o.setName("lead").setDescription("The Team Lead").setRequired(true))
+        // 3. VIEW TEAM (UPDATED)
+        .addSubcommand(sub => sub.setName("viewteam").setDescription("View comprehensive Team Report (Lead + Guides).")
+            .addUserOption(o => o.setName("user").setDescription("The Staff Member (Lead or Guide)").setRequired(true))
         )
         // SETTERS
         .addSubcommand(sub => sub.setName("settier").setDescription("Update Tier.").addStringOption(o => o.setName("name").setDescription("Faction").setRequired(true).setAutocomplete(true)).addIntegerOption(o => o.setName("tier").setDescription("Tier (1-9)").setMinValue(1).setMaxValue(9).setRequired(true)))
@@ -114,7 +77,14 @@ export default {
         .addSubcommand(sub => sub.setName("setdiscord").setDescription("Set Discord Link.").addStringOption(o => o.setName("name").setDescription("Faction").setRequired(true).setAutocomplete(true)).addStringOption(o => o.setName("link").setDescription("URL").setRequired(true)))
         // ACTIONS
         .addSubcommand(sub => sub.setName("swaplead").setDescription("Bulk transfer factions.").addUserOption(o => o.setName("old_lead").setDescription("Old Lead").setRequired(true)).addUserOption(o => o.setName("new_lead").setDescription("New Lead").setRequired(true)))
-        .addSubcommand(sub => sub.setName("roster").setDescription("Link Staff to Role.").addUserOption(o => o.setName("user").setDescription("Staff Member").setRequired(true)).addStringOption(o => o.setName("role_id").setDescription("Role ID").setRequired(true)).addStringOption(o => o.setName("team_name").setDescription("Team Name").setRequired(false)))
+        // ROSTER (UPDATED)
+        .addSubcommand(sub => sub.setName("roster").setDescription("Add/Update Staff Member in Matrix.")
+            .addUserOption(o => o.setName("user").setDescription("Staff Member").setRequired(true))
+            .addRoleOption(o => o.setName("role").setDescription("Ping Role").setRequired(true))
+            .addStringOption(o => o.setName("team_name").setDescription("Team Name (e.g. Alpha)").setRequired(true))
+            .addStringOption(o => o.setName("rank").setDescription("Staff Rank").setRequired(true)
+                .addChoices({ name: "Team Lead", value: "Lead" }, { name: "Team Guide", value: "Guide" }))
+        )
         .addSubcommand(sub => sub.setName("remove").setDescription("Remove faction.").addStringOption(o => o.setName("name").setDescription("Faction Name").setRequired(true).setAutocomplete(true))),
 
     async autocomplete(interaction) {
@@ -144,6 +114,97 @@ export default {
         const factionName = interaction.options.getString("name"); 
 
         try {
+            // --- ROSTER (UPDATED) ---
+            if (sub === "roster") {
+                const user = interaction.options.getUser("user");
+                const role = interaction.options.getRole("role");
+                const team = interaction.options.getString("team_name");
+                const rank = interaction.options.getString("rank");
+
+                // 1. Read StaffRoster
+                const res = await sheets.spreadsheets.values.get({ spreadsheetId: GOOGLE_SHEET_ID, range: "StaffRoster!A:A" });
+                const rows = (res.data.values || []).flat();
+                
+                const rowIndex = rows.indexOf(user.id);
+                
+                // 2. Add or Update
+                // Structure: [UserID, RoleID, Username, TeamName, Rank]
+                const rowData = [user.id, role.id, user.username, team, rank];
+
+                if (rowIndex > -1) {
+                    const sheetRow = rowIndex + 1;
+                    await sheets.spreadsheets.values.update({ 
+                        spreadsheetId: GOOGLE_SHEET_ID, 
+                        range: `StaffRoster!A${sheetRow}:E${sheetRow}`, 
+                        valueInputOption: "USER_ENTERED", 
+                        requestBody: { values: [rowData] } 
+                    });
+                    return interaction.editReply(`✅ **Updated:** ${user} is now **${rank}** of **${team}**.`);
+                } else {
+                    await sheets.spreadsheets.values.append({ 
+                        spreadsheetId: GOOGLE_SHEET_ID, 
+                        range: "StaffRoster!A:E", 
+                        valueInputOption: "USER_ENTERED", 
+                        requestBody: { values: [rowData] } 
+                    });
+                    return interaction.editReply(`✅ **Added:** ${user} as **${rank}** of **${team}**.`);
+                }
+            }
+
+            // --- VIEW TEAM (UPDATED) ---
+            if (sub === "viewteam") {
+                const targetUser = interaction.options.getUser("user");
+                
+                // 1. Find User in StaffRoster to get their Team
+                const rosterRes = await sheets.spreadsheets.values.get({ spreadsheetId: GOOGLE_SHEET_ID, range: "StaffRoster!A:E" });
+                const rosterRows = rosterRes.data.values || [];
+                const staffEntry = rosterRows.find(r => r[0] === targetUser.id);
+
+                if (!staffEntry) return interaction.editReply(`❌ **${targetUser.username}** is not in the Staff Roster.`);
+
+                const myTeam = staffEntry[3]; // Col D = Team Name
+                const myRank = staffEntry[4]; // Col E = Rank
+
+                // 2. Find ALL members of this Team
+                const teamMembers = rosterRows.filter(r => r[3] === myTeam);
+                const teamIds = teamMembers.map(r => r[0]); // All User IDs in this team
+
+                // 3. Find ALL factions assigned to ANY of these IDs
+                const factionRes = await sheets.spreadsheets.values.get({ spreadsheetId: GOOGLE_SHEET_ID, range: "FactionData!A:G" });
+                const allFactions = factionRes.data.values || [];
+                
+                // Filter factions where the Lead ID is in our teamIds list
+                const teamFactions = allFactions.filter(r => teamIds.includes(r[1]));
+
+                const embed = new EmbedBuilder()
+                    .setTitle(`🛡️ Team Report: ${myTeam}`)
+                    .setDescription(`**Requested by:** ${targetUser} (${myRank})\n**Team Members:** ${teamMembers.length}\n**Total Factions:** ${teamFactions.length}`)
+                    .setColor(0xFFA500);
+
+                // Group by Staff Member
+                teamMembers.forEach(member => {
+                    const memberId = member[0];
+                    const memberName = member[2];
+                    const memberRank = member[4];
+                    
+                    const myFactions = teamFactions.filter(f => f[1] === memberId);
+                    
+                    if (myFactions.length > 0) {
+                        const factionList = myFactions.map(f => {
+                            const name = f[0];
+                            const tier = f[2] || "0";
+                            return `• ${name} (T${tier})`;
+                        }).join("\n");
+                        
+                        embed.addFields({ name: `${memberName} (${memberRank})`, value: factionList, inline: false });
+                    } else {
+                        embed.addFields({ name: `${memberName} (${memberRank})`, value: "_No factions assigned._", inline: false });
+                    }
+                });
+
+                return interaction.editReply({ embeds: [embed] });
+            }
+
             // --- CREATE ---
             if (sub === "create") {
                 if (await findFactionRow("FactionData", factionName)) return interaction.editReply(`❌ **${factionName}** already exists.`);
@@ -163,30 +224,31 @@ export default {
                 return interaction.editReply(`✅ **${factionName}** created.`);
             }
 
-            // --- VIEW FACTION (FIXED DATE PARSING) ---
+            // --- VIEW FACTION ---
             if (sub === "view") {
                 const rowNum = await findFactionRow("FactionData", factionName);
                 if (!rowNum) return interaction.editReply(`❌ Faction **${factionName}** not found.`);
 
-                // Fetch Matrix Info
                 const res = await sheets.spreadsheets.values.get({ spreadsheetId: GOOGLE_SHEET_ID, range: `FactionData!A${rowNum}:G${rowNum}` });
                 const row = res.data.values?.[0] || [];
-                // [Name, Lead, Tier, Date, FeedbackID, ForumLink, DiscordLink]
 
                 const leadId = row[1];
                 const leadDisplay = (leadId && leadId !== "None") ? `<@${leadId}>` : "_None_";
                 
+                // LEADERSHIP LOOKUP
                 let roleStatus = "_Not Assigned_";
                 if (leadId && leadId !== "None") {
-                    const rosterRes = await sheets.spreadsheets.values.get({ spreadsheetId: GOOGLE_SHEET_ID, range: "StaffRoster!A:B" });
+                    const rosterRes = await sheets.spreadsheets.values.get({ spreadsheetId: GOOGLE_SHEET_ID, range: "StaffRoster!A:E" });
                     const rosterRow = (rosterRes.data.values || []).find(r => r[0] === leadId);
-                    if (rosterRow?.[1]) roleStatus = `<@&${rosterRow[1]}>`;
+                    if (rosterRow) {
+                        // rosterRow: [ID, Role, Name, Team, Rank]
+                        roleStatus = `${rosterRow[4]} of ${rosterRow[3]} (<@&${rosterRow[1]}>)`; 
+                    }
                 }
 
-                // Fetch Stats
+                // STATS LOGIC (Kept same as yours)
                 const logsRes = await sheets.spreadsheets.values.get({ spreadsheetId: GOOGLE_SHEET_ID, range: "Scene Logs!A:C" });
                 const logRows = logsRes.data.values || [];
-                
                 let allTime = 0;
                 let monthCount = 0;
                 let rewards = [];
@@ -199,7 +261,6 @@ export default {
                     if (lFaction === targetName) {
                         allTime++;
                         const lDate = parseLogDate(logRows[i][0]);
-                        // Only count if date is valid AND within 30 days
                         if (lDate && lDate >= thirtyDaysAgo) {
                             monthCount++;
                             if (logRows[i][2]) rewards.push(`• ${logRows[i][2]} (${logRows[i][0]})`);
@@ -207,18 +268,16 @@ export default {
                     }
                 }
 
-                // --- BUILD EXPLICIT LINKS ---
                 const feedbackStatus = row[4] ? `Scene Feedback: <#${row[4]}>` : "❌ **Feedback:** Not Set";
                 const forumStatus = row[5] ? `[Forum Thread](${row[5]})` : "❌ **Forum:** Not Set";
                 const discordStatus = row[6] ? `[Discord](${row[6]})` : "❌ **Discord:** Not Set";
                 const linkBlock = `${feedbackStatus}\n${forumStatus}\n${discordStatus}`;
 
-                // --- BUILD EMBED ---
                 const embed = new EmbedBuilder()
                     .setTitle(`📂 ${row[0]} - Tier ${row[2] || 0}`)
                     .setColor(0x2b2d31)
                     .addFields(
-                        { name: "➡️ Information", value: `**Lead:** ${leadDisplay}\n**Team:** ${roleStatus}\n**Last Promoted:** ${row[3] || "N/A"}`, inline: true },
+                        { name: "➡️ Information", value: `**Lead:** ${leadDisplay}\n**Staff:** ${roleStatus}\n**Last Promoted:** ${row[3] || "N/A"}`, inline: true },
                         { name: "➡️ Scenes Ran", value: `**30 Days:** ${monthCount}\n**All Time:** ${allTime}`, inline: false },
                         { name: "🔗 Quick Links", value: linkBlock, inline: false },
                         { name: "🎁 Recent Rewards", value: rewards.length ? rewards.slice(0, 5).join("\n") : "_No rewards in last 30 days._", inline: false }
@@ -228,33 +287,7 @@ export default {
                 return interaction.editReply({ embeds: [embed] });
             }
 
-            // --- VIEW TEAM ---
-            if (sub === "viewteam") {
-                const leadUser = interaction.options.getUser("lead");
-                const res = await sheets.spreadsheets.values.get({ spreadsheetId: GOOGLE_SHEET_ID, range: "FactionData!A:G" });
-                const teamFactions = (res.data.values || []).filter(r => r[1] === leadUser.id);
-
-                if (teamFactions.length === 0) return interaction.editReply(`ℹ️ **${leadUser.tag}** does not lead any factions.`);
-
-                const embed = new EmbedBuilder()
-                    .setTitle(`📋 Team View: ${leadUser.username}`)
-                    .setColor(0xFFA500)
-                    .setFooter({ text: `Overseeing ${teamFactions.length} Factions` });
-
-                teamFactions.forEach(r => {
-                    const name = r[0];
-                    const tier = r[2] || "0";
-                    const feed = r[4] ? `<#${r[4]}>` : "❌";
-                    const forum = r[5] ? `[Forum](${r[5]})` : "❌";
-                    const disc = r[6] ? `[Discord](${r[6]})` : "❌";
-                    const line = `Feed: ${feed} • ${forum} • ${disc}`;
-                    embed.addFields({ name: `${name} (Tier ${tier})`, value: line, inline: false });
-                });
-
-                return interaction.editReply({ embeds: [embed] });
-            }
-
-            // --- SETTERS & UTILS ---
+            // --- SETTERS & ACTIONS ---
             const map = { settier: "C", setlead: "B", setthread: "E", setforum: "F", setdiscord: "G" };
             if (map[sub]) {
                 const rowNum = await findFactionRow("FactionData", factionName);
@@ -282,18 +315,6 @@ export default {
                 if (count === 0) return interaction.editReply("❌ No factions found.");
                 await sheets.spreadsheets.values.update({ spreadsheetId: GOOGLE_SHEET_ID, range: "FactionData!A:G", valueInputOption: "USER_ENTERED", requestBody: { values: rows } });
                 return interaction.editReply(`✅ Transferred **${count}** factions.`);
-            }
-
-            if (sub === "roster") {
-                const uid = interaction.options.getUser("user").id;
-                const rid = interaction.options.getString("role_id");
-                const tname = interaction.options.getString("team_name") || "Staff";
-                const res = await sheets.spreadsheets.values.get({ spreadsheetId: GOOGLE_SHEET_ID, range: "StaffRoster!A:A" });
-                const rows = res.data.values || [];
-                let idx = rows.findIndex(r => r[0] === uid);
-                if (idx > -1) await sheets.spreadsheets.values.update({ spreadsheetId: GOOGLE_SHEET_ID, range: `StaffRoster!B${idx+1}:C${idx+1}`, valueInputOption: "USER_ENTERED", requestBody: { values: [[rid, tname]] } });
-                else await sheets.spreadsheets.values.append({ spreadsheetId: GOOGLE_SHEET_ID, range: "StaffRoster!A:C", valueInputOption: "USER_ENTERED", requestBody: { values: [[uid, rid, tname]] } });
-                return interaction.editReply(`✅ Roster updated for <@${uid}>.`);
             }
 
             if (sub === "remove") {
