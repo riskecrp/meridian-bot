@@ -1,6 +1,38 @@
 import { SlashCommandBuilder } from "discord.js";
 import { sheets, GOOGLE_SHEET_ID } from "../utils/googleClient.js";
 
+// --- CACHING SYSTEM (Prevents Timeout) ---
+let factionCache = [];
+let lastFetchTime = 0;
+const CACHE_DURATION = 60000; // 60 Seconds
+
+async function getFactionNames() {
+    const now = Date.now();
+    // 1. Return Cache if valid (fast!)
+    if (factionCache.length > 0 && (now - lastFetchTime < CACHE_DURATION)) {
+        return factionCache;
+    }
+
+    try {
+        console.log("[AddProperty] Fetching fresh names from Google Sheets...");
+        const res = await sheets.spreadsheets.values.get({
+            spreadsheetId: GOOGLE_SHEET_ID,
+            range: "FactionData!A2:A999"
+        });
+        
+        const rows = res.data.values || [];
+        // Flatten, trim, and remove empty slots
+        factionCache = rows.flat().map(f => f.trim()).filter(f => f && f.length > 0);
+        lastFetchTime = now;
+        
+        console.log(`[AddProperty] Cached ${factionCache.length} factions.`);
+        return factionCache;
+    } catch (err) {
+        console.error("Error fetching names:", err);
+        return [];
+    }
+}
+
 // Helper Functions specific to this command
 async function findNextRowRewards() {
     const res = await sheets.spreadsheets.values.get({
@@ -54,16 +86,17 @@ export default {
                 .setRequired(true)
         ),
 
-    // Re-use the autocomplete from factioninfo logic? 
-    // Since we don't have a shared cache yet, we will just load it simply here.
-    // Ideally, you move loadFactions to utils, but for now, let's keep it simple.
     async autocomplete(interaction) {
-        // Simple autocomplete handling
-        const focusedValue = interaction.options.getFocused();
-        // NOTE: In a real app, import 'loadFactions' from a shared util to avoid API spam
-        // For now, we will just return a generic message or basic cache if available.
-        // If you want full faction autocomplete here, we need to export the loader from utils.
-        await interaction.respond([]); 
+        const focused = interaction.options.getFocused().toLowerCase();
+        
+        // Use the Cached Function
+        const choices = await getFactionNames();
+
+        const filtered = choices
+            .filter(c => c.toLowerCase().includes(focused))
+            .slice(0, 25);
+            
+        await interaction.respond(filtered.map(c => ({ name: c, value: c })));
     },
 
     async execute(interaction) {
