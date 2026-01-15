@@ -13,28 +13,60 @@ function getRepeatMilliseconds(str) {
 }
 
 export function startScheduler(client) {
-    // Check every minute
     cron.schedule("* * * * *", async () => {
         try {
-            const res = await sheets.spreadsheets.values.get({ spreadsheetId: GOOGLE_SHEET_ID, range: "Reminders!A2:H200" });
+            // Read A-I (include Status col)
+            const res = await sheets.spreadsheets.values.get({ spreadsheetId: GOOGLE_SHEET_ID, range: "Reminders!A2:I200" });
             const rows = res.data.values || [];
             if (rows.length === 0) return;
 
             const now = Date.now();
             const rowsToDelete = [];
             const rowsToUpdate = [];
+            const statusUpdates = []; // For marking "WARNED"
 
             for (let i = 0; i < rows.length; i++) {
                 const row = rows[i];
                 if (!row[3]) continue;
 
                 const triggerTime = parseInt(row[3]);
+                const repeat = row[5] || "None";
                 const uuid = row[7];
+                const status = row[8] || ""; // Col I
 
+                const diffMinutes = (triggerTime - now) / 1000 / 60;
+                
+                // 1. CHECK FOR 30m WARNING
+                // Condition: Within 30 mins, Not Recurring, Not already warned
+                if (repeat === "None" && diffMinutes <= 30 && diffMinutes > 0 && status !== "WARNED") {
+                    const channelId = row[1];
+                    const msg = row[2];
+                    const targetPing = row[6];
+
+                    try {
+                        const channel = await client.channels.fetch(channelId).catch(() => null);
+                        if (channel) {
+                            const embed = new EmbedBuilder()
+                                .setTitle("⚠️ Upcoming Event")
+                                .setDescription(`${msg}\n\n**Starting:** <t:${Math.floor(triggerTime/1000)}:R>`)
+                                .setColor(0xFFA500); // Orange
+
+                            await channel.send({ 
+                                content: `🔔 ${targetPing} (30m Warning)`, 
+                                embeds: [embed] 
+                            });
+                            
+                            // Mark as WARNED so we don't spam
+                            statusUpdates.push({ rowIndex: i + 2, val: "WARNED" });
+                        }
+                    } catch (e) { console.error(e); }
+                }
+
+                // 2. CHECK FOR FINAL TRIGGER
                 if (now >= triggerTime) {
                     const channelId = row[1];
                     const msg = row[2];
-                    const targetPing = row[6]; // <@User> or <@&Role>
+                    const targetPing = row[6];
 
                     try {
                         const channel = await client.channels.fetch(channelId).catch(() => null);
@@ -42,7 +74,7 @@ export function startScheduler(client) {
                             const embed = new EmbedBuilder()
                                 .setTitle("⏰ Reminder")
                                 .setDescription(msg)
-                                .setColor(0x00FF00)
+                                .setColor(0x00FF00) // Green
                                 .setFooter({ text: `ID: ${uuid}` });
 
                             const buttons = new ActionRowBuilder().addComponents(
@@ -52,41 +84,51 @@ export function startScheduler(client) {
                             );
 
                             await channel.send({ 
-                                content: `🔔 ${targetPing}`, 
+                                content: `🚨 ${targetPing}`, 
                                 embeds: [embed], 
                                 components: [buttons] 
                             });
-                            console.log(`[CRON] Fired ${uuid}`);
                         }
-                    } catch (err) {
-                        console.error(`[CRON] Failed ${uuid}:`, err.message);
-                    }
+                    } catch (err) { console.error(err); }
 
-                    // Handle Repeat
-                    const repeatMs = getRepeatMilliseconds(row[5]);
+                    // Handle Repeat vs Delete
+                    const repeatMs = getRepeatMilliseconds(repeat);
                     if (repeatMs > 0) {
                         const nextTime = now + repeatMs;
                         rowsToUpdate.push({
                             rowIndex: i + 2,
                             vals: [nextTime, new Date(nextTime).toISOString()]
                         });
+                        // Reset status to ACTIVE for next cycle
+                        statusUpdates.push({ rowIndex: i + 2, val: "ACTIVE" });
                     } else {
                         rowsToDelete.push(i + 2);
                     }
                 }
             }
 
-            // Execute Updates
-            for (const update of rowsToUpdate) {
+            // EXECUTE SHEET WRITES
+            // 1. Status Updates (Warnings)
+            for (const up of statusUpdates) {
                 await sheets.spreadsheets.values.update({
                     spreadsheetId: GOOGLE_SHEET_ID,
-                    range: `Reminders!D${update.rowIndex}:E${update.rowIndex}`,
+                    range: `Reminders!I${up.rowIndex}`,
                     valueInputOption: "USER_ENTERED",
-                    requestBody: { values: [update.vals] }
+                    requestBody: { values: [[up.val]] }
                 });
             }
 
-            // Execute Deletes
+            // 2. Time Updates (Recurring)
+            for (const up of rowsToUpdate) {
+                await sheets.spreadsheets.values.update({
+                    spreadsheetId: GOOGLE_SHEET_ID,
+                    range: `Reminders!D${up.rowIndex}:E${up.rowIndex}`,
+                    valueInputOption: "USER_ENTERED",
+                    requestBody: { values: [up.vals] }
+                });
+            }
+
+            // 3. Deletions
             if (rowsToDelete.length > 0) {
                 rowsToDelete.sort((a, b) => b - a);
                 const meta = await sheets.spreadsheets.get({ spreadsheetId: GOOGLE_SHEET_ID });
