@@ -1,6 +1,21 @@
 import { SlashCommandBuilder } from "discord.js";
 import { sheets, GOOGLE_SHEET_ID } from "../utils/googleClient.js";
 
+// --- HELPER: Fetch Faction Names (Master List) ---
+async function getFactionNames() {
+    try {
+        const res = await sheets.spreadsheets.values.get({
+            spreadsheetId: GOOGLE_SHEET_ID,
+            range: "FactionData!A2:A999" // Reads from your Master Faction List
+        });
+        // Flattens the 2D array and removes empty rows
+        return (res.data.values || []).flat().map(f => f.trim()).filter(f => f);
+    } catch (err) {
+        console.error("Error fetching names:", err);
+        return [];
+    }
+}
+
 // Helper: Find next empty row for People (Columns A-E)
 async function findNextRowTable1() {
     const res = await sheets.spreadsheets.values.get({
@@ -30,7 +45,7 @@ export default {
                     o.setName("faction")
                         .setDescription("Faction Name")
                         .setRequired(true)
-                        .setAutocomplete(true)
+                        .setAutocomplete(true) // Triggers the autocomplete function
                 )
                 .addStringOption(o =>
                     o.setName("character")
@@ -75,21 +90,33 @@ export default {
         ),
 
     async autocomplete(interaction) {
-        // Simple autocomplete stub to prevent crashing
-        // In the future, we can link this to the shared cache in factioninfo
-        const focusedValue = interaction.options.getFocused();
-        await interaction.respond([]);
+        const focusedValue = interaction.options.getFocused().toLowerCase();
+        
+        // 1. Fetch names from Google Sheets
+        const choices = await getFactionNames();
+
+        // 2. Filter based on what the user has typed so far
+        const filtered = choices
+            .filter(choice => choice.toLowerCase().includes(focusedValue))
+            .slice(0, 25); // Discord limit is 25 choices
+
+        // 3. Send choices back to Discord
+        await interaction.respond(
+            filtered.map(choice => ({ name: choice, value: choice }))
+        );
     },
 
     async execute(interaction) {
-        // Role Check: Team Lead OR Management
+        // Role Check
         const memberRoles = interaction.member?.roles?.cache;
+        // Adjust these role names if they differ in your server
         const hasTeamLead = memberRoles ? memberRoles.some(r => r.name === "[ECRP] FM Team Lead") : false;
         const hasManagement = memberRoles ? memberRoles.some(r => r.name === "[ECRP] FM Leadership") : false;
+        const hasFM = memberRoles ? memberRoles.some(r => r.name === "[ECRP] Faction Management") : false;
 
-        if (!(hasTeamLead || hasManagement)) {
+        if (!(hasTeamLead || hasManagement || hasFM)) {
             return interaction.reply({
-                content: "You do not have permission to run this command. (Requires Team Lead or Management role)",
+                content: "❌ You do not have permission to run this command.",
                 ephemeral: true
             });
         }
@@ -102,7 +129,7 @@ export default {
                 const character = interaction.options.getString("character");
                 const phone = interaction.options.getString("phone") || "";
                 const personalAddress = interaction.options.getString("personaladdress") || "";
-                const leader = interaction.options.getBoolean("leader") ? true : false;
+                const leader = interaction.options.getBoolean("leader") ? "TRUE" : "FALSE";
 
                 const row = await findNextRowTable1();
                 await sheets.spreadsheets.values.update({
@@ -114,13 +141,13 @@ export default {
                     }
                 });
 
-                return interaction.reply({ content: "✅ Person dossier recorded to Sheet1 (A-E).", ephemeral: true });
+                return interaction.reply({ content: `✅ **${character}** added to **${faction}** dossier.`, ephemeral: true });
             }
 
             if (sub === "location") {
                 const faction = interaction.options.getString("faction");
                 const address = interaction.options.getString("address");
-                const isHQ = interaction.options.getBoolean("is_hq") ? true : false;
+                const isHQ = interaction.options.getBoolean("is_hq") ? "TRUE" : "FALSE";
 
                 const row = await findNextRowSheet1();
                 await sheets.spreadsheets.values.update({
@@ -132,12 +159,12 @@ export default {
                     }
                 });
 
-                return interaction.reply({ content: "✅ Location dossier recorded to Sheet1 (F-H).", ephemeral: true });
+                return interaction.reply({ content: `✅ Location **${address}** added to **${faction}** dossier.`, ephemeral: true });
             }
 
         } catch (err) {
             console.error("ADDDOSSIER ERROR:", err);
-            return interaction.reply({ content: "There was an error updating the Google Sheet.", ephemeral: true });
+            return interaction.reply({ content: "❌ Database Error.", ephemeral: true });
         }
     }
 };
