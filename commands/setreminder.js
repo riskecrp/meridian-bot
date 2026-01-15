@@ -36,7 +36,6 @@ function parseTime(input) {
     }
 
     let dateToParse = cleanText;
-    // Add today's date if just time provided
     if (dateToParse.match(/^\d{1,2}:\d{2}$/) || dateToParse.match(/^\d{1,2}(AM|PM)$/)) {
         const d = new Date();
         const dateStr = `${d.getMonth() + 1}/${d.getDate()}/${d.getFullYear()}`;
@@ -60,12 +59,6 @@ export default {
             .addStringOption(o => o.setName("repeat").setDescription("Optional: '24h', '7d' for recurring").setRequired(false))
             .addMentionableOption(o => o.setName("target").setDescription("Who to ping? (User or Role)").setRequired(false))
         )
-        // EDIT
-        .addSubcommand(sub => sub.setName("edit").setDescription("Change an existing reminder.")
-            .addIntegerOption(o => o.setName("id").setDescription("The Row ID from /setreminder list").setRequired(true))
-            .addStringOption(o => o.setName("new_time").setDescription("New time (leave empty to keep current)").setRequired(false))
-            .addStringOption(o => o.setName("new_repeat").setDescription("New interval (or 'none' to stop)").setRequired(false))
-        )
         // LIST
         .addSubcommand(sub => sub.setName("list").setDescription("View active reminders."))
         // REMOVE
@@ -86,8 +79,6 @@ export default {
                 const message = interaction.options.getString("message");
                 const repeat = interaction.options.getString("repeat") || "None";
                 const target = interaction.options.getMentionable("target");
-                
-                // Format Target string (<@123> or <@&123>)
                 const targetString = target ? target.toString() : `<@${userId}>`;
 
                 const targetTimestamp = parseTime(timeInput);
@@ -100,11 +91,11 @@ export default {
 
                 await sheets.spreadsheets.values.append({
                     spreadsheetId: GOOGLE_SHEET_ID,
-                    range: "Reminders!A:H",
+                    range: "Reminders!A:I", // UPDATED RANGE
                     valueInputOption: "USER_ENTERED",
                     requestBody: {
                         values: [[
-                            userId, channelId, message, targetTimestamp, humanTime, repeat, targetString, uuid
+                            userId, channelId, message, targetTimestamp, humanTime, repeat, targetString, uuid, "ACTIVE"
                         ]]
                     }
                 });
@@ -112,52 +103,9 @@ export default {
                 const unix = Math.floor(targetTimestamp / 1000);
                 let response = `✅ **Reminder Set!**\n📅 <t:${unix}:F>\n📝 "${message}"`;
                 if (repeat !== "None") response += `\n🔁 Repeats: ${repeat}`;
-                if (target) response += `\n🔔 Pinging: ${target}`;
+                if (repeat === "None") response += `\n⚠️ Includes 30m warning.`;
 
                 return interaction.editReply(response);
-            }
-
-            // --- EDIT ---
-            if (sub === "edit") {
-                const id = interaction.options.getInteger("id");
-                const newTime = interaction.options.getString("new_time");
-                const newRepeat = interaction.options.getString("new_repeat");
-
-                const check = await sheets.spreadsheets.values.get({ spreadsheetId: GOOGLE_SHEET_ID, range: `Reminders!A${id}:H${id}` });
-                const row = check.data.values?.[0];
-                if (!row || row[0] !== userId) return interaction.editReply("❌ Not found or not yours.");
-
-                let updated = false;
-                let reply = `✅ **Updated ID ${id}:**`;
-
-                if (newTime) {
-                    const ts = parseTime(newTime);
-                    if (ts && ts > Date.now()) {
-                        await sheets.spreadsheets.values.update({
-                            spreadsheetId: GOOGLE_SHEET_ID,
-                            range: `Reminders!D${id}:E${id}`,
-                            valueInputOption: "USER_ENTERED",
-                            requestBody: { values: [[ts, new Date(ts).toISOString()]] }
-                        });
-                        reply += `\n⏰ Time changed.`;
-                        updated = true;
-                    } else return interaction.editReply("❌ Invalid new time.");
-                }
-
-                if (newRepeat) {
-                    const val = newRepeat.toLowerCase() === "none" ? "None" : newRepeat;
-                    await sheets.spreadsheets.values.update({
-                        spreadsheetId: GOOGLE_SHEET_ID,
-                        range: `Reminders!F${id}`,
-                        valueInputOption: "USER_ENTERED",
-                        requestBody: { values: [[val]] }
-                    });
-                    reply += `\n🔁 Repeat set to: ${val}`;
-                    updated = true;
-                }
-
-                if (!updated) return interaction.editReply("⚠️ No changes made.");
-                return interaction.editReply(reply);
             }
 
             // --- LIST ---
