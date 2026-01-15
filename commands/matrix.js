@@ -145,45 +145,53 @@ export default {
                     const guideText = data.guides.length > 0 ? data.guides.map(id => `<@${id}>`).join(" | ") : "_None_";
                     const teamFactions = allFactions.filter(f => data.teamIds.includes(f[1]));
 
-                    let factionText = "";
-                    if (teamFactions.length === 0) {
-                        factionText = "> _No assigned factions._";
-                    } else {
-                        factionText = teamFactions.map(f => {
-                            const name = f[0];
-                            const tier = f[2] || "0";
-                            const feed = f[4] ? `[Feedback](https://discord.com/channels/${interaction.guildId}/${f[4]})` : "❌";
-                            const forum = f[5] ? `[Forum](${f[5]})` : "❌";
-                            const disc = f[6] ? `[Discord](${f[6]})` : "❌";
-                            return `> • **${name}** (T${tier})\n> └ ${disc} • ${feed} • ${forum}`;
-                        }).join("\n> \n"); 
-                    }
-
                     const staffBlock = `**Team Lead:**\n${leadText}\n\n**Team Members:**\n${guideText}`;
-                    const fullBlock = `${staffBlock}\n\n**Team Factions:**\n${factionText}`;
 
-                    if (fullBlock.length <= 1024) {
-                        embed.addFields({ name: `🛡️ ${teamName}`, value: fullBlock, inline: false });
+                    // PREPARE ATOMIC BLOCKS
+                    const factionBlocks = teamFactions.map(f => {
+                        const name = f[0];
+                        const tier = f[2] || "0";
+                        const feed = f[4] ? `[Feedback](https://discord.com/channels/${interaction.guildId}/${f[4]})` : "❌";
+                        const forum = f[5] ? `[Forum](${f[5]})` : "❌";
+                        const disc = f[6] ? `[Discord](${f[6]})` : "❌";
+                        return `> • **${name}** (T${tier})\n> └ ${disc} • ${feed} • ${forum}`;
+                    });
+
+                    // CHUNKING LOGIC (ATOMIC)
+                    let currentChunk = "";
+                    const chunks = [];
+                    for (const block of factionBlocks) {
+                        const separator = currentChunk.length > 0 ? "\n> \n" : "";
+                        if ((currentChunk + separator + block).length > 1000) {
+                            chunks.push(currentChunk);
+                            currentChunk = block;
+                        } else {
+                            currentChunk += separator + block;
+                        }
+                    }
+                    if (currentChunk) chunks.push(currentChunk);
+
+                    // DISPLAY LOGIC
+                    if (chunks.length === 0) {
+                        embed.addFields({ name: `🛡️ ${teamName}`, value: `${staffBlock}\n\n**Team Factions:**\n> _No assigned factions._`, inline: false });
                     } else {
-                        embed.addFields({ name: `🛡️ ${teamName}`, value: staffBlock, inline: false });
-                        const lines = factionText.split("\n");
-                        let chunk = "";
-                        lines.forEach(line => {
-                            if ((chunk + line).length > 1000) {
-                                embed.addFields({ name: `> ...continued`, value: chunk, inline: false });
-                                chunk = line + "\n";
-                            } else {
-                                chunk += line + "\n";
-                            }
-                        });
-                        if (chunk) embed.addFields({ name: `> ${teamName} Factions`, value: chunk, inline: false });
+                        // Try combining staff + first chunk
+                        const combinedStart = `${staffBlock}\n\n**Team Factions:**\n${chunks[0]}`;
+                        if (combinedStart.length <= 1024 && chunks.length === 1) {
+                             embed.addFields({ name: `🛡️ ${teamName}`, value: combinedStart, inline: false });
+                        } else {
+                            embed.addFields({ name: `🛡️ ${teamName}`, value: staffBlock, inline: false });
+                            chunks.forEach((chunk, i) => {
+                                embed.addFields({ name: i === 0 ? `> ${teamName} Factions` : `> ...continued`, value: chunk, inline: false });
+                            });
+                        }
                     }
                 }
 
                 return interaction.editReply({ embeds: [embed] });
             }
 
-            // --- VIEW TEAM (MATCHING OVERVIEW STYLE) ---
+            // --- VIEW TEAM (ATOMIC FIX) ---
             if (sub === "viewteam") {
                 const targetUser = interaction.options.getUser("user");
                 const rosterRes = await sheets.spreadsheets.values.get({ spreadsheetId: GOOGLE_SHEET_ID, range: "StaffRoster!A:C" });
@@ -193,69 +201,68 @@ export default {
                 if (!staffEntry) return interaction.editReply(`❌ **${targetUser.username}** is not in the Staff Roster.`);
 
                 const myRoleId = staffEntry[1];
-                
-                // Fetch Role Name for Title
                 const roleObj = interaction.guild.roles.cache.get(myRoleId);
                 const teamName = roleObj ? roleObj.name : "Unknown Team";
 
-                // Gather Team Data
                 const teamMembers = rosterRows.filter(r => r[1] === myRoleId);
                 const teamIds = teamMembers.map(r => r[0]); 
                 const leads = teamMembers.filter(r => r[2]?.toLowerCase().includes("lead")).map(r => r[0]);
                 const guides = teamMembers.filter(r => !r[2]?.toLowerCase().includes("lead")).map(r => r[0]);
 
-                // Gather Factions
                 const factionRes = await sheets.spreadsheets.values.get({ spreadsheetId: GOOGLE_SHEET_ID, range: "FactionData!A:G" });
                 const allFactions = factionRes.data.values || [];
                 const teamFactions = allFactions.filter(r => teamIds.includes(r[1]));
 
-                // Build Embed
                 const embed = new EmbedBuilder()
                     .setTitle(`🛡️ Team Report`)
                     .setColor(0xFFA500);
 
                 const leadText = leads.length > 0 ? leads.map(id => `<@${id}>`).join(", ") : "_Vacant_";
                 const guideText = guides.length > 0 ? guides.map(id => `<@${id}>`).join(" | ") : "_None_";
-
-                let factionText = "";
-                if (teamFactions.length === 0) {
-                    factionText = "> _No assigned factions._";
-                } else {
-                    factionText = teamFactions.map(f => {
-                        const name = f[0];
-                        const tier = f[2] || "0";
-                        const feed = f[4] ? `[Feedback](https://discord.com/channels/${interaction.guildId}/${f[4]})` : "❌";
-                        const forum = f[5] ? `[Forum](${f[5]})` : "❌";
-                        const disc = f[6] ? `[Discord](${f[6]})` : "❌";
-                        return `> • **${name}** (T${tier})\n> └ ${disc} • ${feed} • ${forum}`;
-                    }).join("\n> \n"); 
-                }
-
                 const staffBlock = `**Team Lead:**\n${leadText}\n\n**Team Members:**\n${guideText}`;
-                const fullBlock = `${staffBlock}\n\n**Team Factions:**\n${factionText}`;
 
-                // Handle Length
-                if (fullBlock.length <= 1024) {
-                    embed.addFields({ name: `🛡️ ${teamName}`, value: fullBlock, inline: false });
+                // ATOMIC BLOCK & CHUNKING
+                const factionBlocks = teamFactions.map(f => {
+                    const name = f[0];
+                    const tier = f[2] || "0";
+                    const feed = f[4] ? `[Feedback](https://discord.com/channels/${interaction.guildId}/${f[4]})` : "❌";
+                    const forum = f[5] ? `[Forum](${f[5]})` : "❌";
+                    const disc = f[6] ? `[Discord](${f[6]})` : "❌";
+                    return `> • **${name}** (T${tier})\n> └ ${disc} • ${feed} • ${forum}`;
+                });
+
+                let currentChunk = "";
+                const chunks = [];
+                for (const block of factionBlocks) {
+                    const separator = currentChunk.length > 0 ? "\n> \n" : "";
+                    if ((currentChunk + separator + block).length > 1000) {
+                        chunks.push(currentChunk);
+                        currentChunk = block;
+                    } else {
+                        currentChunk += separator + block;
+                    }
+                }
+                if (currentChunk) chunks.push(currentChunk);
+
+                // DISPLAY LOGIC
+                if (chunks.length === 0) {
+                     embed.addFields({ name: `🛡️ ${teamName}`, value: staffBlock, inline: false });
                 } else {
-                    embed.addFields({ name: `🛡️ ${teamName}`, value: staffBlock, inline: false });
-                    const lines = factionText.split("\n");
-                    let chunk = "";
-                    lines.forEach(line => {
-                        if ((chunk + line).length > 1000) {
-                            embed.addFields({ name: `> ...continued`, value: chunk, inline: false });
-                            chunk = line + "\n";
-                        } else {
-                            chunk += line + "\n";
-                        }
-                    });
-                    if (chunk) embed.addFields({ name: `> ${teamName} Factions`, value: chunk, inline: false });
+                    const combinedStart = `${staffBlock}\n\n**Team Factions:**\n${chunks[0]}`;
+                    if (combinedStart.length <= 1024 && chunks.length === 1) {
+                        embed.addFields({ name: `🛡️ ${teamName}`, value: combinedStart, inline: false });
+                    } else {
+                        embed.addFields({ name: `🛡️ ${teamName}`, value: staffBlock, inline: false });
+                        chunks.forEach((chunk, i) => {
+                            embed.addFields({ name: i === 0 ? `> ${teamName} Factions` : `> ...continued`, value: chunk, inline: false });
+                        });
+                    }
                 }
 
                 return interaction.editReply({ embeds: [embed] });
             }
 
-            // --- VIEW FACTION (FIXED LAYOUT) ---
+            // --- VIEW FACTION ---
             if (sub === "view") {
                 const rowNum = await findFactionRow("FactionData", factionName);
                 if (!rowNum) return interaction.editReply(`❌ Faction **${factionName}** not found.`);
@@ -290,13 +297,10 @@ export default {
                     }
                 }
 
-                // FIXED LINKS: Just emojis/text, no labels
                 const feedbackLink = row[4] ? `💬 <#${row[4]}>` : "💬 ❌";
                 const forumLink = row[5] ? `📄 [Forum](${row[5]})` : "📄 ❌";
                 const discordLink = row[6] ? `🔊 [Discord](${row[6]})` : "🔊 ❌";
                 const linkBlock = `${discordLink} • ${feedbackLink} • ${forumLink}`;
-
-                // FIXED LAYOUT: Last Promoted first, Team Label fixed
                 const infoBlock = `**Last Promoted:** ${row[3] || "N/A"}\n**Lead:** ${leadDisplay}\n**Team:** ${teamRoleDisplay}`;
 
                 const embed = new EmbedBuilder().setTitle(`📂 ${row[0]} - Tier ${row[2] || 0}`).setColor(0x2b2d31).addFields(
