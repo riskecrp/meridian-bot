@@ -110,7 +110,7 @@ export default {
         const factionName = interaction.options.getString("name"); 
 
         try {
-            // --- OVERVIEW (UPDATED LAYOUT) ---
+            // --- OVERVIEW (FORMATTING FIXED) ---
             if (sub === "overview") {
                 const rosterRes = await sheets.spreadsheets.values.get({ spreadsheetId: GOOGLE_SHEET_ID, range: "StaffRoster!A:C" });
                 const factionRes = await sheets.spreadsheets.values.get({ spreadsheetId: GOOGLE_SHEET_ID, range: "FactionData!A:G" });
@@ -140,11 +140,15 @@ export default {
                     .setTimestamp();
 
                 for (const [roleId, data] of Object.entries(teams)) {
-                    const leadText = data.leads.length > 0 ? data.leads.map(id => `<@${id}>`).join(", ") : "_None_";
+                    // FETCH REAL ROLE NAME (To avoid ugly <@&...> in header)
+                    const roleObj = interaction.guild.roles.cache.get(roleId);
+                    const teamName = roleObj ? roleObj.name : "Unknown Team";
+
+                    const leadText = data.leads.length > 0 ? data.leads.map(id => `<@${id}>`).join(", ") : "_Vacant_";
                     const guideText = data.guides.length > 0 ? data.guides.map(id => `<@${id}>`).join(" | ") : "_None_";
                     const teamFactions = allFactions.filter(f => data.teamIds.includes(f[1]));
 
-                    let factionText = "_No assigned factions._";
+                    let factionText = "> _No assigned factions._";
                     if (teamFactions.length > 0) {
                         factionText = teamFactions.map(f => {
                             const name = f[0];
@@ -152,15 +156,18 @@ export default {
                             const feed = f[4] ? `[Feedback](https://discord.com/channels/${interaction.guildId}/${f[4]})` : "❌";
                             const forum = f[5] ? `[Forum](${f[5]})` : "❌";
                             const disc = f[6] ? `[Discord](${f[6]})` : "❌";
-                            return `${name} | Tier ${tier} | ${disc} - ${feed} - ${forum}`;
-                        }).join("\n");
+                            
+                            // CLEANER FORMAT: 
+                            // > • Name (T1)
+                            // > └ [Links]
+                            return `> • **${name}** (T${tier})\n> └ ${disc} • ${feed} • ${forum}`;
+                        }).join("\n> \n"); // Adds a spacer line between factions
                     }
 
-                    // UPDATED BLOCK FORMAT: Newlines added
-                    const block = `**Team Lead:**\n${leadText}\n\n**Team Members:**\n${guideText}\n\n**Team Factions:**\n${factionText}`;
+                    const block = `**Team Lead:** ${leadText}\n**Team Members:** ${guideText}\n\n**Team Factions:**\n${factionText}`;
 
                     embed.addFields({
-                        name: `Team: <@&${roleId}>`,
+                        name: `🛡️ ${teamName}`, // Uses Text Name (Clean)
                         value: block,
                         inline: false
                     });
