@@ -110,12 +110,15 @@ export default {
         const factionName = interaction.options.getString("name"); 
 
         try {
-            // --- OVERVIEW (FORMATTING FIXED) ---
+            // --- OVERVIEW (HEADER FILTER ADDED) ---
             if (sub === "overview") {
                 const rosterRes = await sheets.spreadsheets.values.get({ spreadsheetId: GOOGLE_SHEET_ID, range: "StaffRoster!A:C" });
                 const factionRes = await sheets.spreadsheets.values.get({ spreadsheetId: GOOGLE_SHEET_ID, range: "FactionData!A:G" });
 
-                const roster = rosterRes.data.values || [];
+                const rawRoster = rosterRes.data.values || [];
+                // FILTER: Exclude empty rows AND the Header Row ("User ID")
+                const roster = rawRoster.filter(r => r[0] && r[1] && r[0].toLowerCase() !== "user id");
+                
                 const allFactions = factionRes.data.values || [];
 
                 if (roster.length === 0) return interaction.editReply("❌ Staff Roster is empty.");
@@ -140,7 +143,6 @@ export default {
                     .setTimestamp();
 
                 for (const [roleId, data] of Object.entries(teams)) {
-                    // FETCH REAL ROLE NAME (To avoid ugly <@&...> in header)
                     const roleObj = interaction.guild.roles.cache.get(roleId);
                     const teamName = roleObj ? roleObj.name : "Unknown Team";
 
@@ -157,17 +159,15 @@ export default {
                             const forum = f[5] ? `[Forum](${f[5]})` : "❌";
                             const disc = f[6] ? `[Discord](${f[6]})` : "❌";
                             
-                            // CLEANER FORMAT: 
-                            // > • Name (T1)
-                            // > └ [Links]
+                            // CLEANER FORMAT
                             return `> • **${name}** (T${tier})\n> └ ${disc} • ${feed} • ${forum}`;
-                        }).join("\n> \n"); // Adds a spacer line between factions
+                        }).join("\n> \n"); 
                     }
 
-                    const block = `**Team Lead:** ${leadText}\n**Team Members:** ${guideText}\n\n**Team Factions:**\n${factionText}`;
+                    const block = `**Team Lead:**\n${leadText}\n\n**Team Members:**\n${guideText}\n\n**Team Factions:**\n${factionText}`;
 
                     embed.addFields({
-                        name: `🛡️ ${teamName}`, // Uses Text Name (Clean)
+                        name: `🛡️ ${teamName}`, 
                         value: block,
                         inline: false
                     });
