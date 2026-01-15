@@ -1,9 +1,12 @@
 import fs from 'node:fs';
 import path from 'node:path';
-import { fileURLToPath, pathToFileURL } from 'url'; // Added pathToFileURL
+import { fileURLToPath, pathToFileURL } from 'url';
 import { Client, Collection, Events, GatewayIntentBits, REST, Routes } from 'discord.js';
 import dotenv from 'dotenv';
-import { startReminderCron } from "./jobs/reminderCron.js"; // <--- IMPORT THE CRON JOB
+
+// --- UPDATED IMPORTS ---
+import { startScheduler } from "./utils/scheduler.js"; // Use the new Scheduler file
+import { sheets, GOOGLE_SHEET_ID } from "./utils/googleClient.js"; // Needed for Snooze logic
 
 dotenv.config();
 
@@ -32,7 +35,6 @@ console.log(`[SYSTEM] Loading ${commandFiles.length} commands...`);
 
 for (const file of commandFiles) {
     const filePath = path.join(commandsPath, file);
-    // Dynamic import needs file:// prefix on Linux/Railway
     const command = await import(pathToFileURL(filePath).href);
 
     if ('data' in command.default && 'execute' in command.default) {
@@ -66,12 +68,13 @@ client.once(Events.ClientReady, c => {
         status: "online"
     });
     
-    // START THE REAL CRON JOB
-    startReminderCron(client); 
-    console.log("[SYSTEM] Reminder Cron Started.");
+    // START THE NEW SCHEDULER
+    startScheduler(client); 
+    console.log("[SYSTEM] Reminder Scheduler Started.");
 });
 
 client.on(Events.InteractionCreate, async interaction => {
+    // --- COMMAND HANDLER ---
     if (interaction.isChatInputCommand()) {
         const command = interaction.client.commands.get(interaction.commandName);
         if (!command) return;
@@ -86,7 +89,9 @@ client.on(Events.InteractionCreate, async interaction => {
                 await interaction.followUp({ content: 'Error executing command.', ephemeral: true });
             }
         }
-    } else if (interaction.isAutocomplete()) {
+    } 
+    // --- AUTOCOMPLETE HANDLER ---
+    else if (interaction.isAutocomplete()) {
         const command = interaction.client.commands.get(interaction.commandName);
         if (!command) return;
 
@@ -94,6 +99,66 @@ client.on(Events.InteractionCreate, async interaction => {
             if (command.autocomplete) await command.autocomplete(interaction);
         } catch (error) {
             console.error(error);
+        }
+    }
+    // --- BUTTON HANDLER (NEW) ---
+    else if (interaction.isButton()) {
+        const { customId } = interaction;
+
+        // 1. DISMISS BUTTON
+        if (customId === "dismiss") {
+            await interaction.update({ content: "✅ **Acknowledged.**", components: [] });
+            return;
+        }
+
+        // 2. SNOOZE BUTTONS
+        if (customId.startsWith("snooze_")) {
+            const duration = customId.split("_")[1]; // "15m" or "1h"
+            
+            // Calculate Milliseconds
+            let addMs = 0;
+            if (duration === "15m") addMs = 15 * 60 * 1000;
+            if (duration === "1h") addMs = 60 * 60 * 1000;
+
+            const newTime = Date.now() + addMs;
+            const newReadable = new Date(newTime).toISOString();
+            
+            // Data Setup
+            // We pull the original message text from the Embed itself
+            const originalEmbed = interaction.message.embeds[0];
+            const originalMsg = originalEmbed ? originalEmbed.description : "Snoozed Reminder";
+            
+            const userId = interaction.user.id;
+            const channelId = interaction.channelId;
+            // The person clicking snooze gets the ping next time
+            const targetString = `<@${userId}>`; 
+            const newUUID = Math.random().toString(36).substring(2, 8);
+
+            try {
+                // WRITE TO SHEET: Add a new temporary reminder row
+                await sheets.spreadsheets.values.append({
+                    spreadsheetId: GOOGLE_SHEET_ID,
+                    range: "Reminders!A:H",
+                    valueInputOption: "USER_ENTERED",
+                    requestBody: {
+                        values: [[
+                            userId, 
+                            channelId, 
+                            `(Snoozed) ${originalMsg}`, 
+                            newTime, 
+                            newReadable, 
+                            "None", // Snoozes do not repeat
+                            targetString, 
+                            newUUID
+                        ]]
+                    }
+                });
+                
+                await interaction.update({ content: `💤 **Snoozed for ${duration}.**`, components: [] });
+            } catch (err) {
+                console.error("[BUTTON ERROR]", err);
+                await interaction.reply({ content: "❌ Failed to snooze. Check bot logs.", ephemeral: true });
+            }
         }
     }
 });
