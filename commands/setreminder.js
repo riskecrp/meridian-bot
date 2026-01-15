@@ -1,93 +1,198 @@
 import { SlashCommandBuilder } from "discord.js";
 import { sheets, GOOGLE_SHEET_ID } from "../utils/googleClient.js";
-import { ensureSheetTab, findNextRowInTab } from "../utils/sheetUtils.js";
-import { DateTime } from "luxon";
 
-// Helper: Convert user input to UTC immediately
-function convertToUTC(date, time, timezone) {
-    const paddedTime = time.includes(":") && time.length < 5 ? time.padStart(5, "0") : time;
-    const dt = DateTime.fromFormat(`${date} ${paddedTime}`, "yyyy-MM-dd HH:mm", { zone: timezone });
-    if (!dt.isValid) return null;
-    const utcDt = dt.toUTC();
-    return { utcDate: utcDt.toFormat("yyyy-MM-dd"), utcTime: utcDt.toFormat("HH:mm") };
+// --- HELPER: Timezone Map ---
+const TIMEZONES = {
+    "EST": -5, "EDT": -4, "CST": -6, "CDT": -5, "PST": -8, "PDT": -7,
+    "MST": -7, "MDT": -6, "GMT": 0, "UTC": 0, "BST": 1, "CET": 1, 
+    "CEST": 2, "EET": 2, "EEST": 3, "AEST": 10, "AEDT": 11
+};
+
+// --- HELPER: Parse Time String ---
+function parseTime(input) {
+    const now = Date.now();
+    const text = input.trim().toUpperCase();
+
+    // 1. Relative (10m, 2h)
+    const relRegex = /^(\d+)(M|H|D)$/;
+    const relMatch = text.match(relRegex);
+    if (relMatch) {
+        const val = parseInt(relMatch[1]);
+        const unit = relMatch[2];
+        const multipliers = { 'M': 60000, 'H': 3600000, 'D': 86400000 };
+        return now + (val * multipliers[unit]);
+    }
+
+    // 2. Absolute (Date/Time + Zone)
+    let offset = 0;
+    let cleanText = text;
+    const words = text.split(/[\s,]+/);
+    for (const word of words) {
+        if (TIMEZONES[word] !== undefined) {
+            offset = TIMEZONES[word];
+            cleanText = cleanText.replace(word, "").trim();
+            break; 
+        }
+    }
+
+    let dateToParse = cleanText;
+    // Add today's date if just time provided
+    if (dateToParse.match(/^\d{1,2}:\d{2}$/) || dateToParse.match(/^\d{1,2}(AM|PM)$/)) {
+        const d = new Date();
+        const dateStr = `${d.getMonth() + 1}/${d.getDate()}/${d.getFullYear()}`;
+        dateToParse = `${dateStr} ${dateToParse}`;
+    }
+
+    const timestamp = Date.parse(dateToParse + " UTC");
+    if (isNaN(timestamp)) return null;
+
+    return timestamp - (offset * 60 * 60 * 1000);
 }
-
-const REMINDER_HEADERS = [
-    "Reminder Text", "Input Time", "Input Date", "Input Timezone", 
-    "UTC Time", "UTC Date", "Recurrence", "Creator", "Creator Role", 
-    "Visibility", "Target Type", "Target Value", "Status", "Channel ID", "Channel Name"
-];
 
 export default {
     data: new SlashCommandBuilder()
         .setName("setreminder")
-        .setDescription("Set a timezone-aware reminder with pings.")
-        .addStringOption(o => o.setName("text").setDescription("Content").setRequired(true))
-        .addStringOption(o => o.setName("time").setDescription("HH:MM (24h)").setRequired(true))
-        .addStringOption(o => o.setName("date").setDescription("YYYY-MM-DD").setRequired(true))
-        .addChannelOption(o => o.setName("channel").setDescription("Where to ping").addChannelTypes(0).setRequired(true))
-        .addStringOption(o => o.setName("target_type").setDescription("User or Role").setRequired(true).addChoices({name:"User", value:"user"},{name:"Role", value:"role"}))
-        .addStringOption(o => o.setName("target_value").setDescription("Username or Role Name").setRequired(true))
-        .addStringOption(o => o.setName("recurrence").setDescription("Pattern").addChoices({name:"None", value:"none"},{name:"Daily", value:"daily"},{name:"Weekly", value:"weekly"},{name:"Monthly", value:"monthly"}))
-        .addStringOption(o => o.setName("timezone").setDescription("Your Timezone (e.g. America/New_York) - Default: UTC")),
+        .setDescription("Manage advanced reminders.")
+        // SET
+        .addSubcommand(sub => sub.setName("set").setDescription("Create a reminder.")
+            .addStringOption(o => o.setName("time").setDescription("Ex: '10m', '5h', '18:00 EST'").setRequired(true))
+            .addStringOption(o => o.setName("message").setDescription("The reminder message").setRequired(true))
+            .addStringOption(o => o.setName("repeat").setDescription("Optional: '24h', '7d' for recurring").setRequired(false))
+            .addMentionableOption(o => o.setName("target").setDescription("Who to ping? (User or Role)").setRequired(false))
+        )
+        // EDIT
+        .addSubcommand(sub => sub.setName("edit").setDescription("Change an existing reminder.")
+            .addIntegerOption(o => o.setName("id").setDescription("The Row ID from /setreminder list").setRequired(true))
+            .addStringOption(o => o.setName("new_time").setDescription("New time (leave empty to keep current)").setRequired(false))
+            .addStringOption(o => o.setName("new_repeat").setDescription("New interval (or 'none' to stop)").setRequired(false))
+        )
+        // LIST
+        .addSubcommand(sub => sub.setName("list").setDescription("View active reminders."))
+        // REMOVE
+        .addSubcommand(sub => sub.setName("remove").setDescription("Delete a reminder.")
+            .addIntegerOption(o => o.setName("id").setDescription("The ID from /setreminder list").setRequired(true))
+        ),
 
     async execute(interaction) {
-        // Permission Check (Simplified for your specific roles)
-        const memberRoles = interaction.member?.roles?.cache;
-        const allowedRoles = ["Team Lead", "Management", "Team Guide", "[ECRP] FM Management"];
-        const hasPerms = memberRoles ? memberRoles.some(r => allowedRoles.includes(r.name)) : false;
-
-        if (!hasPerms) {
-            return interaction.reply({ content: "❌ Unauthorized.", ephemeral: true });
-        }
-
         await interaction.deferReply({ ephemeral: true });
-
-        const text = interaction.options.getString("text");
-        const time = interaction.options.getString("time");
-        const date = interaction.options.getString("date");
-        const channel = interaction.options.getChannel("channel");
-        const targetType = interaction.options.getString("target_type");
-        const targetValue = interaction.options.getString("target_value");
-        const recurrence = interaction.options.getString("recurrence") || "none";
-        const timezone = interaction.options.getString("timezone") || "UTC";
-
-        // 1. Convert to UTC Logic
-        const utcData = convertToUTC(date, time, timezone);
-        if (!utcData) {
-            return interaction.editReply(`❌ **Invalid Time/Date/Timezone combination.**`);
-        }
+        const sub = interaction.options.getSubcommand();
+        const userId = interaction.user.id;
+        const channelId = interaction.channelId;
 
         try {
-            await ensureSheetTab("Reminders", REMINDER_HEADERS);
-            const nextRow = await findNextRowInTab("Reminders", "A");
+            // --- SET ---
+            if (sub === "set") {
+                const timeInput = interaction.options.getString("time");
+                const message = interaction.options.getString("message");
+                const repeat = interaction.options.getString("repeat") || "None";
+                const target = interaction.options.getMentionable("target");
+                
+                // Format Target string (<@123> or <@&123>)
+                const targetString = target ? target.toString() : `<@${userId}>`;
 
-            // 2. Construct Row (15 Columns)
-            const values = [
-                text, time, date, timezone,                 // A-D
-                utcData.utcTime, utcData.utcDate,           // E-F (The important ones)
-                recurrence, interaction.user.username, "FM",// G-I
-                "public", targetType, targetValue,          // J-L
-                "active", channel.id, channel.name          // M-O
-            ];
+                const targetTimestamp = parseTime(timeInput);
+                if (!targetTimestamp || targetTimestamp <= Date.now()) {
+                    return interaction.editReply("❌ Invalid or past time.");
+                }
 
-            await sheets.spreadsheets.values.update({
-                spreadsheetId: GOOGLE_SHEET_ID,
-                range: `Reminders!A${nextRow}:O${nextRow}`,
-                valueInputOption: "USER_ENTERED",
-                requestBody: { values: [values] }
-            });
+                const uuid = Math.random().toString(36).substring(2, 8);
+                const humanTime = new Date(targetTimestamp).toISOString();
 
-            return interaction.editReply(
-                `✅ **Reminder Set!**\n` +
-                `**Target:** ${targetValue} (${targetType})\n` +
-                `**Time:** ${date} ${time} (${timezone})\n` +
-                `*(Stored as UTC: ${utcData.utcDate} ${utcData.utcTime})*`
-            );
+                await sheets.spreadsheets.values.append({
+                    spreadsheetId: GOOGLE_SHEET_ID,
+                    range: "Reminders!A:H",
+                    valueInputOption: "USER_ENTERED",
+                    requestBody: {
+                        values: [[
+                            userId, channelId, message, targetTimestamp, humanTime, repeat, targetString, uuid
+                        ]]
+                    }
+                });
 
-        } catch (e) {
-            console.error("SETREMINDER ERROR:", e);
-            return interaction.editReply("❌ Database Error."); 
+                const unix = Math.floor(targetTimestamp / 1000);
+                let response = `✅ **Reminder Set!**\n📅 <t:${unix}:F>\n📝 "${message}"`;
+                if (repeat !== "None") response += `\n🔁 Repeats: ${repeat}`;
+                if (target) response += `\n🔔 Pinging: ${target}`;
+
+                return interaction.editReply(response);
+            }
+
+            // --- EDIT ---
+            if (sub === "edit") {
+                const id = interaction.options.getInteger("id");
+                const newTime = interaction.options.getString("new_time");
+                const newRepeat = interaction.options.getString("new_repeat");
+
+                const check = await sheets.spreadsheets.values.get({ spreadsheetId: GOOGLE_SHEET_ID, range: `Reminders!A${id}:H${id}` });
+                const row = check.data.values?.[0];
+                if (!row || row[0] !== userId) return interaction.editReply("❌ Not found or not yours.");
+
+                let updated = false;
+                let reply = `✅ **Updated ID ${id}:**`;
+
+                if (newTime) {
+                    const ts = parseTime(newTime);
+                    if (ts && ts > Date.now()) {
+                        await sheets.spreadsheets.values.update({
+                            spreadsheetId: GOOGLE_SHEET_ID,
+                            range: `Reminders!D${id}:E${id}`,
+                            valueInputOption: "USER_ENTERED",
+                            requestBody: { values: [[ts, new Date(ts).toISOString()]] }
+                        });
+                        reply += `\n⏰ Time changed.`;
+                        updated = true;
+                    } else return interaction.editReply("❌ Invalid new time.");
+                }
+
+                if (newRepeat) {
+                    const val = newRepeat.toLowerCase() === "none" ? "None" : newRepeat;
+                    await sheets.spreadsheets.values.update({
+                        spreadsheetId: GOOGLE_SHEET_ID,
+                        range: `Reminders!F${id}`,
+                        valueInputOption: "USER_ENTERED",
+                        requestBody: { values: [[val]] }
+                    });
+                    reply += `\n🔁 Repeat set to: ${val}`;
+                    updated = true;
+                }
+
+                if (!updated) return interaction.editReply("⚠️ No changes made.");
+                return interaction.editReply(reply);
+            }
+
+            // --- LIST ---
+            if (sub === "list") {
+                const res = await sheets.spreadsheets.values.get({ spreadsheetId: GOOGLE_SHEET_ID, range: "Reminders!A:F" });
+                const rows = res.data.values || [];
+                const myReminders = rows.map((r, i) => ({ r, id: i + 1 })).filter(x => x.r[0] === userId);
+
+                if (myReminders.length === 0) return interaction.editReply("📭 No active reminders.");
+
+                const list = myReminders.map(item => {
+                    const ts = Math.floor(parseInt(item.r[3]) / 1000);
+                    const repeat = item.r[5] && item.r[5] !== "None" ? ` (🔁 ${item.r[5]})` : "";
+                    return `**ID ${item.id}:** <t:${ts}:R> — *${item.r[2]}*${repeat}`;
+                }).join("\n");
+
+                return interaction.editReply(`**Your Reminders:**\n${list}`);
+            }
+
+            // --- REMOVE ---
+            if (sub === "remove") {
+                const id = interaction.options.getInteger("id");
+                const meta = await sheets.spreadsheets.get({ spreadsheetId: GOOGLE_SHEET_ID });
+                const sheetId = meta.data.sheets.find(s => s.properties.title === "Reminders").properties.sheetId;
+                
+                await sheets.spreadsheets.batchUpdate({ 
+                    spreadsheetId: GOOGLE_SHEET_ID, 
+                    requestBody: { requests: [{ deleteDimension: { range: { sheetId: sheetId, dimension: "ROWS", startIndex: id-1, endIndex: id } } }] } 
+                });
+                return interaction.editReply(`🗑️ Deleted reminder **ID ${id}**.`);
+            }
+
+        } catch (err) {
+            console.error(err);
+            return interaction.editReply("❌ System Error.");
         }
     }
 };
