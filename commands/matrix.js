@@ -110,28 +110,23 @@ export default {
         const factionName = interaction.options.getString("name"); 
 
         try {
-            // --- OVERVIEW (HEADER FILTER ADDED) ---
+            // --- OVERVIEW (CRASH FIX: Split Fields) ---
             if (sub === "overview") {
                 const rosterRes = await sheets.spreadsheets.values.get({ spreadsheetId: GOOGLE_SHEET_ID, range: "StaffRoster!A:C" });
                 const factionRes = await sheets.spreadsheets.values.get({ spreadsheetId: GOOGLE_SHEET_ID, range: "FactionData!A:G" });
 
                 const rawRoster = rosterRes.data.values || [];
-                // FILTER: Exclude empty rows AND the Header Row ("User ID")
-                const roster = rawRoster.filter(r => r[0] && r[1] && r[0].toLowerCase() !== "user id");
-                
+                const roster = rawRoster.filter(r => r[0] && r[1] && r[0].toLowerCase() !== "user id"); // Header Filter
                 const allFactions = factionRes.data.values || [];
 
                 if (roster.length === 0) return interaction.editReply("❌ Staff Roster is empty.");
 
                 const teams = {};
-
                 roster.forEach(row => {
                     const userId = row[0];
                     const roleId = row[1];
                     const rank = row[2]?.toLowerCase() || "";
-
                     if (!teams[roleId]) teams[roleId] = { leads: [], guides: [], teamIds: [] };
-                    
                     teams[roleId].teamIds.push(userId);
                     if (rank.includes("lead")) teams[roleId].leads.push(userId);
                     else teams[roleId].guides.push(userId);
@@ -150,27 +145,57 @@ export default {
                     const guideText = data.guides.length > 0 ? data.guides.map(id => `<@${id}>`).join(" | ") : "_None_";
                     const teamFactions = allFactions.filter(f => data.teamIds.includes(f[1]));
 
-                    let factionText = "> _No assigned factions._";
-                    if (teamFactions.length > 0) {
+                    // Build Staff Info
+                    const staffBlock = `**Team Lead:**\n${leadText}\n\n**Team Members:**\n${guideText}`;
+
+                    // Build Faction Info
+                    let factionText = "";
+                    if (teamFactions.length === 0) {
+                        factionText = "> _No assigned factions._";
+                    } else {
                         factionText = teamFactions.map(f => {
                             const name = f[0];
                             const tier = f[2] || "0";
                             const feed = f[4] ? `[Feedback](https://discord.com/channels/${interaction.guildId}/${f[4]})` : "❌";
                             const forum = f[5] ? `[Forum](${f[5]})` : "❌";
                             const disc = f[6] ? `[Discord](${f[6]})` : "❌";
-                            
-                            // CLEANER FORMAT
                             return `> • **${name}** (T${tier})\n> └ ${disc} • ${feed} • ${forum}`;
                         }).join("\n> \n"); 
                     }
 
-                    const block = `**Team Lead:**\n${leadText}\n\n**Team Members:**\n${guideText}\n\n**Team Factions:**\n${factionText}`;
+                    // SAFETY CHECK: Discord Limit is 1024 chars per field
+                    const fullBlock = `${staffBlock}\n\n**Team Factions:**\n${factionText}`;
 
-                    embed.addFields({
-                        name: `🛡️ ${teamName}`, 
-                        value: block,
-                        inline: false
-                    });
+                    if (fullBlock.length <= 1024) {
+                        // Fits in one field
+                        embed.addFields({ name: `🛡️ ${teamName}`, value: fullBlock, inline: false });
+                    } else {
+                        // Too big: Split into Staff Field + Factions Field(s)
+                        embed.addFields({ name: `🛡️ ${teamName}`, value: staffBlock, inline: false });
+
+                        // Split factions if even THAT is too big
+                        const factionChunks = [];
+                        let currentChunk = "";
+                        const lines = factionText.split("\n");
+                        
+                        for (const line of lines) {
+                            if ((currentChunk + line).length > 1000) {
+                                factionChunks.push(currentChunk);
+                                currentChunk = line + "\n";
+                            } else {
+                                currentChunk += line + "\n";
+                            }
+                        }
+                        if (currentChunk) factionChunks.push(currentChunk);
+
+                        factionChunks.forEach((chunk, i) => {
+                            embed.addFields({ 
+                                name: i === 0 ? `> ${teamName} Factions` : `> ...continued`, 
+                                value: chunk, 
+                                inline: false 
+                            });
+                        });
+                    }
                 }
 
                 return interaction.editReply({ embeds: [embed] });
@@ -181,29 +206,16 @@ export default {
                 const user = interaction.options.getUser("user");
                 const role = interaction.options.getRole("role");
                 const rank = interaction.options.getString("rank");
-
                 const res = await sheets.spreadsheets.values.get({ spreadsheetId: GOOGLE_SHEET_ID, range: "StaffRoster!A:A" });
                 const rows = (res.data.values || []).flat();
                 const rowIndex = rows.indexOf(user.id);
-                
                 const rowData = [user.id, role.id, rank];
-
                 if (rowIndex > -1) {
                     const sheetRow = rowIndex + 1;
-                    await sheets.spreadsheets.values.update({ 
-                        spreadsheetId: GOOGLE_SHEET_ID, 
-                        range: `StaffRoster!A${sheetRow}:C${sheetRow}`, 
-                        valueInputOption: "USER_ENTERED", 
-                        requestBody: { values: [rowData] } 
-                    });
+                    await sheets.spreadsheets.values.update({ spreadsheetId: GOOGLE_SHEET_ID, range: `StaffRoster!A${sheetRow}:C${sheetRow}`, valueInputOption: "USER_ENTERED", requestBody: { values: [rowData] } });
                     return interaction.editReply(`✅ **Updated:** ${user} is now **${rank}** of ${role}.`);
                 } else {
-                    await sheets.spreadsheets.values.append({ 
-                        spreadsheetId: GOOGLE_SHEET_ID, 
-                        range: "StaffRoster!A:C", 
-                        valueInputOption: "USER_ENTERED", 
-                        requestBody: { values: [rowData] } 
-                    });
+                    await sheets.spreadsheets.values.append({ spreadsheetId: GOOGLE_SHEET_ID, range: "StaffRoster!A:C", valueInputOption: "USER_ENTERED", requestBody: { values: [rowData] } });
                     return interaction.editReply(`✅ **Added:** ${user} as **${rank}** of ${role}.`);
                 }
             }
@@ -211,35 +223,23 @@ export default {
             // --- VIEW TEAM ---
             if (sub === "viewteam") {
                 const targetUser = interaction.options.getUser("user");
-                
                 const rosterRes = await sheets.spreadsheets.values.get({ spreadsheetId: GOOGLE_SHEET_ID, range: "StaffRoster!A:C" });
                 const rosterRows = rosterRes.data.values || [];
-                
                 const staffEntry = rosterRows.find(r => r[0] === targetUser.id);
                 if (!staffEntry) return interaction.editReply(`❌ **${targetUser.username}** is not in the Staff Roster.`);
-
                 const myRoleId = staffEntry[1];
                 const myRank = staffEntry[2]; 
-
                 const teamMembers = rosterRows.filter(r => r[1] === myRoleId);
                 const teamIds = teamMembers.map(r => r[0]); 
-
                 const factionRes = await sheets.spreadsheets.values.get({ spreadsheetId: GOOGLE_SHEET_ID, range: "FactionData!A:G" });
                 const allFactions = factionRes.data.values || [];
                 const teamFactions = allFactions.filter(r => teamIds.includes(r[1]));
-
-                const embed = new EmbedBuilder()
-                    .setTitle(`🛡️ Team Report`)
-                    .setDescription(`**Team:** <@&${myRoleId}>\n**Requested by:** ${targetUser} (${myRank})\n**Members:** ${teamMembers.length} | **Factions:** ${teamFactions.length}`)
-                    .setColor(0xFFA500);
-
+                const embed = new EmbedBuilder().setTitle(`🛡️ Team Report`).setDescription(`**Team:** <@&${myRoleId}>\n**Requested by:** ${targetUser} (${myRank})\n**Members:** ${teamMembers.length} | **Factions:** ${teamFactions.length}`).setColor(0xFFA500);
                 teamMembers.forEach(member => {
                     const memberId = member[0];
                     const memberRank = member[2];
                     const myFactions = teamFactions.filter(f => f[1] === memberId);
-                    
                     const header = `<@${memberId}> (${memberRank})`;
-                    
                     if (myFactions.length > 0) {
                         const factionList = myFactions.map(f => {
                             const name = f[0];
@@ -251,14 +251,12 @@ export default {
                         embed.addFields({ name: header, value: "_No factions assigned._", inline: false });
                     }
                 });
-
                 return interaction.editReply({ embeds: [embed] });
             }
 
             // --- CREATE ---
             if (sub === "create") {
                 if (await findFactionRow("FactionData", factionName)) return interaction.editReply(`❌ **${factionName}** already exists.`);
-                
                 const leadUser = interaction.options.getUser("lead");
                 const tier = interaction.options.getInteger("tier") || 0;
                 const feedbackId = interaction.options.getString("feedback_thread") || "";
@@ -266,7 +264,6 @@ export default {
                 const discordLink = interaction.options.getString("discord_link") || "";
                 const today = getTodayDate();
                 const leadId = leadUser ? leadUser.id : "None";
-
                 if (!(await findFactionRow("Sheet1", factionName))) {
                     await sheets.spreadsheets.values.append({ spreadsheetId: GOOGLE_SHEET_ID, range: "Sheet1!A:A", valueInputOption: "USER_ENTERED", requestBody: { values: [[factionName]] } });
                 }
@@ -278,13 +275,10 @@ export default {
             if (sub === "view") {
                 const rowNum = await findFactionRow("FactionData", factionName);
                 if (!rowNum) return interaction.editReply(`❌ Faction **${factionName}** not found.`);
-
                 const res = await sheets.spreadsheets.values.get({ spreadsheetId: GOOGLE_SHEET_ID, range: `FactionData!A${rowNum}:G${rowNum}` });
                 const row = res.data.values?.[0] || [];
-
                 const leadId = row[1];
                 const leadDisplay = (leadId && leadId !== "None") ? `<@${leadId}>` : "_None_";
-                
                 let roleStatus = "_Not Assigned_";
                 if (leadId && leadId !== "None") {
                     const rosterRes = await sheets.spreadsheets.values.get({ spreadsheetId: GOOGLE_SHEET_ID, range: "StaffRoster!A:C" });
@@ -293,16 +287,11 @@ export default {
                         roleStatus = `${rosterRow[2]} (<@&${rosterRow[1]}>)`; 
                     }
                 }
-
                 const logsRes = await sheets.spreadsheets.values.get({ spreadsheetId: GOOGLE_SHEET_ID, range: "Scene Logs!A:C" });
                 const logRows = logsRes.data.values || [];
-                let allTime = 0;
-                let monthCount = 0;
-                let rewards = [];
-                const thirtyDaysAgo = new Date();
-                thirtyDaysAgo.setDate(thirtyDaysAgo.getDate() - 30);
+                let allTime = 0; let monthCount = 0; let rewards = [];
+                const thirtyDaysAgo = new Date(); thirtyDaysAgo.setDate(thirtyDaysAgo.getDate() - 30);
                 const targetName = factionName.toLowerCase().trim();
-
                 for (let i = 1; i < logRows.length; i++) {
                     const lFaction = logRows[i][1]?.toLowerCase().trim();
                     if (lFaction === targetName) {
@@ -314,23 +303,16 @@ export default {
                         }
                     }
                 }
-
                 const feedbackStatus = row[4] ? `Scene Feedback: <#${row[4]}>` : "❌ **Feedback:** Not Set";
                 const forumStatus = row[5] ? `[Forum Thread](${row[5]})` : "❌ **Forum:** Not Set";
                 const discordStatus = row[6] ? `[Discord](${row[6]})` : "❌ **Discord:** Not Set";
                 const linkBlock = `${feedbackStatus}\n${forumStatus}\n${discordStatus}`;
-
-                const embed = new EmbedBuilder()
-                    .setTitle(`📂 ${row[0]} - Tier ${row[2] || 0}`)
-                    .setColor(0x2b2d31)
-                    .addFields(
+                const embed = new EmbedBuilder().setTitle(`📂 ${row[0]} - Tier ${row[2] || 0}`).setColor(0x2b2d31).addFields(
                         { name: "➡️ Information", value: `**Lead:** ${leadDisplay}\n**Last Promoted:** ${row[3] || "N/A"}\n**Staff:** ${roleStatus}`, inline: true },
                         { name: "➡️ Scenes Ran", value: `**30 Days:** ${monthCount}\n**All Time:** ${allTime}`, inline: false },
                         { name: "🔗 Quick Links", value: linkBlock, inline: false },
                         { name: "🎁 Recent Rewards", value: rewards.length ? rewards.slice(0, 5).join("\n") : "_No rewards in last 30 days._", inline: false }
-                    )
-                    .setFooter({ text: "[ECRP] Faction Management System" });
-
+                    ).setFooter({ text: "[ECRP] Faction Management System" });
                 return interaction.editReply({ embeds: [embed] });
             }
 
@@ -339,7 +321,6 @@ export default {
             if (map[sub]) {
                 const rowNum = await findFactionRow("FactionData", factionName);
                 if (!rowNum) return interaction.editReply(`❌ Faction **${factionName}** not found.`);
-                
                 let val = ""; 
                 if (sub === "settier") { 
                     val = interaction.options.getInteger("tier"); 
@@ -347,11 +328,9 @@ export default {
                 }
                 else if (sub === "setlead") val = interaction.options.getUser("user").id;
                 else val = interaction.options.getString(sub === "setthread" ? "thread_id" : "link");
-
                 await sheets.spreadsheets.values.update({ spreadsheetId: GOOGLE_SHEET_ID, range: `FactionData!${map[sub]}${rowNum}`, valueInputOption: "USER_ENTERED", requestBody: { values: [[val]] } });
                 return interaction.editReply(`✅ **${factionName}**: Updated ${sub.replace("set", "")}.`);
             }
-
             if (sub === "swaplead") {
                 const oldId = interaction.options.getUser("old_lead").id;
                 const newId = interaction.options.getUser("new_lead").id;
@@ -363,7 +342,6 @@ export default {
                 await sheets.spreadsheets.values.update({ spreadsheetId: GOOGLE_SHEET_ID, range: "FactionData!A:G", valueInputOption: "USER_ENTERED", requestBody: { values: rows } });
                 return interaction.editReply(`✅ Transferred **${count}** factions.`);
             }
-
             if (sub === "remove") {
                 const rowNum = await findFactionRow("FactionData", factionName);
                 if (!rowNum) return interaction.editReply(`❌ Not found.`);
@@ -371,7 +349,6 @@ export default {
                 await sheets.spreadsheets.batchUpdate({ spreadsheetId: GOOGLE_SHEET_ID, requestBody: { requests: [{ deleteDimension: { range: { sheetId: sid, dimension: "ROWS", startIndex: rowNum-1, endIndex: rowNum } } }] } });
                 return interaction.editReply(`🗑️ Deleted **${factionName}**.`);
             }
-
         } catch (err) {
             console.error(err);
             if (!interaction.replied) interaction.editReply("❌ System Error.");
