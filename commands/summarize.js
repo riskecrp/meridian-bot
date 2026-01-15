@@ -21,9 +21,9 @@ export default {
         });
 
         // PERMISSION CHECK
-        const ROLE_LEADERSHIP_ID = "1457670376745074730";
+        const ROLE_LEADERSHIP_ID = "1457229857749729363";
         if (!interaction.member.roles.cache.has(ROLE_LEADERSHIP_ID)) {
-            return interaction.reply({ content: "❌ Restricted to FM Leadership.", ephemeral: true });
+            return interaction.reply({ content: "❌ Restricted to Faction Management.", ephemeral: true });
         }
 
         await interaction.deferReply();
