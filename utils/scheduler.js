@@ -47,12 +47,12 @@ export function startScheduler(client) {
                         const channel = await client.channels.fetch(channelId).catch(() => null);
                         if (channel) {
                             const embed = new EmbedBuilder()
-                                .setTitle("⚠️ Upcoming Event")
+                                .setTitle("⚠️ 30 Minute Reminder")
                                 .setDescription(`${msg}\n\n**Starting:** <t:${Math.floor(triggerTime/1000)}:R>`)
                                 .setColor(0xFFA500); // Orange
 
                             await channel.send({ 
-                                content: `🔔 ${targetPing} (30m Warning)`, 
+                                content: `🔔 ${targetPing}`, 
                                 embeds: [embed] 
                             });
                             
