@@ -84,8 +84,8 @@ export default {
     async execute(interaction) {
         // Role Check: Team Lead OR Management
         const memberRoles = interaction.member?.roles?.cache;
-        const hasTeamLead = memberRoles ? memberRoles.some(r => r.name === "Team Lead") : false;
-        const hasManagement = memberRoles ? memberRoles.some(r => r.name === "Management") : false;
+        const hasTeamLead = memberRoles ? memberRoles.some(r => r.name === "[ECRP] FM Team Lead") : false;
+        const hasManagement = memberRoles ? memberRoles.some(r => r.name === "[ECRP] FM Leadership") : false;
 
         if (!(hasTeamLead || hasManagement)) {
             return interaction.reply({
