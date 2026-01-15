@@ -56,9 +56,9 @@ export default {
 
     async execute(interaction) {
         // Role Check
-        if (!hasRequiredRole(interaction, ["Team Leader", "Management", "Team Guide"])) {
+        if (!hasRequiredRole(interaction, ["[ECRP] Faction Management"])) {
             return interaction.reply({ 
-                content: "You do not have permission to run this command. (Requires Team Leader, Management, or Team Guide role)", 
+                content: "You do not have permission to run this command. ([ECRP] Faction Management)", 
                 ephemeral: true 
             });
         }
