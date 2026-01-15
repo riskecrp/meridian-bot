@@ -37,7 +37,6 @@ export default {
         .setName("confiscateproperty")
         .setDescription("Instantly confiscate a property (Sets Faction to 'None' & logs it).")
         .addStringOption(o => o.setName("address").setDescription("Select Property Address").setRequired(true).setAutocomplete(true))
-        // Kept Date optional just in case the original record is missing a date
         .addStringOption(o => o.setName("date").setDescription("Original Date Given (Optional override)").setRequired(false)),
 
     async autocomplete(interaction) {
@@ -56,12 +55,12 @@ export default {
     },
 
     async execute(interaction) {
-        // Role Check
+        // PERMISSION CHECK: [ECRP] FM Leadership
         const memberRoles = interaction.member?.roles?.cache;
-        const hasManagement = memberRoles ? memberRoles.some(r => r.name === "[ECRP] FM Management") : false;
+        const hasLeadership = memberRoles ? memberRoles.some(r => r.name === "[ECRP] FM Leadership") : false;
 
-        if (!hasManagement) {
-            return interaction.reply({ content: "❌ Permission Denied: Management role required.", ephemeral: true });
+        if (!hasLeadership) {
+            return interaction.reply({ content: "❌ Permission Denied: [ECRP] FM Leadership required.", ephemeral: true });
         }
 
         await interaction.deferReply({ ephemeral: true });
@@ -70,14 +69,14 @@ export default {
         const dateInput = interaction.options.getString("date");
 
         try {
-            // 1. Search PropertyRewards (Cols A-G)
+            // 1. Search PropertyRewards
             const res = await sheets.spreadsheets.values.get({
                 spreadsheetId: GOOGLE_SHEET_ID,
                 range: "PropertyRewards!A1:G5000"
             });
             const rows = res.data.values || [];
             
-            // 2. Find Match by Address (Column C, Index 2)
+            // 2. Find Match by Address
             const addressNorm = addressInput.trim().toLowerCase();
             let match = null;
             let sheetRow = -1;
@@ -96,9 +95,9 @@ export default {
             }
 
             // 3. Capture Existing Data
-            const oldDateGiven = match[0] || dateInput || "Unknown Date"; // Col A
-            const oldFaction = match[1] || "Unknown Faction";             // Col B
-            const existingType = match[3] || "Property";                  // Col D (Auto-detected)
+            const oldDateGiven = match[0] || dateInput || "Unknown Date"; 
+            const oldFaction = match[1] || "Unknown Faction";             
+            const existingType = match[3] || "Property";                  
 
             // 4. Check if already confiscated
             if (match[4] && match[4].toLowerCase() === "true") {
