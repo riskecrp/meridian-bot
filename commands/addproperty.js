@@ -1,14 +1,13 @@
 import { SlashCommandBuilder } from "discord.js";
 import { sheets, GOOGLE_SHEET_ID } from "../utils/googleClient.js";
 
-// --- CACHING SYSTEM (Prevents Timeout) ---
+// --- CACHING SYSTEM ---
 let factionCache = [];
 let lastFetchTime = 0;
 const CACHE_DURATION = 60000; // 60 Seconds
 
 async function getFactionNames() {
     const now = Date.now();
-    // 1. Return Cache if valid (fast!)
     if (factionCache.length > 0 && (now - lastFetchTime < CACHE_DURATION)) {
         return factionCache;
     }
@@ -21,7 +20,6 @@ async function getFactionNames() {
         });
         
         const rows = res.data.values || [];
-        // Flatten, trim, and remove empty slots
         factionCache = rows.flat().map(f => f.trim()).filter(f => f && f.length > 0);
         lastFetchTime = now;
         
@@ -33,7 +31,7 @@ async function getFactionNames() {
     }
 }
 
-// Helper Functions specific to this command
+// Helper Functions
 async function findNextRowRewards() {
     const res = await sheets.spreadsheets.values.get({
         spreadsheetId: GOOGLE_SHEET_ID,
@@ -89,10 +87,14 @@ export default {
     async autocomplete(interaction) {
         const focused = interaction.options.getFocused().toLowerCase();
         
-        // Use the Cached Function
-        const choices = await getFactionNames();
+        // 1. Get real factions
+        const realFactions = await getFactionNames();
 
-        const filtered = choices
+        // 2. Add "None" to the list explicitly
+        const allChoices = ["None", ...realFactions];
+
+        // 3. Filter
+        const filtered = allChoices
             .filter(c => c.toLowerCase().includes(focused))
             .slice(0, 25);
             
@@ -149,7 +151,7 @@ export default {
             });
 
             return interaction.editReply({
-                content: "✅ Property recorded and added to faction database."
+                content: `✅ Property recorded.\n**Faction:** ${faction}\n**Address:** ${address}`
             });
 
         } catch (err) {
