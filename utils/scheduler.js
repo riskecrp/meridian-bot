@@ -52,7 +52,7 @@ export function startScheduler(client) {
                                 .setColor(0xFFA500); // Orange
 
                             await channel.send({ 
-                                content: `🔔 ${targetPing}`, 
+                                content: `${targetPing}`, 
                                 embeds: [embed] 
                             });
                             
@@ -72,7 +72,7 @@ export function startScheduler(client) {
                         const channel = await client.channels.fetch(channelId).catch(() => null);
                         if (channel) {
                             const embed = new EmbedBuilder()
-                                .setTitle("⏰ Reminder")
+                                .setTitle("Due Now")
                                 .setDescription(msg)
                                 .setColor(0x00FF00) // Green
                                 .setFooter({ text: `ID: ${uuid}` });
