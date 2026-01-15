@@ -16,17 +16,15 @@ async function getPropertyAddresses() {
         console.log("[Confiscate] Fetching addresses from PropertyRewards!C:C...");
         const res = await sheets.spreadsheets.values.get({
             spreadsheetId: GOOGLE_SHEET_ID,
-            // Column C is Address (A=Date, B=Faction, C=Address)
+            // Column C is Address
             range: "PropertyRewards!C2:C2000" 
         });
         
         const rows = res.data.values || [];
-        // Flatten 2D array, trim spaces, remove duplicates
         const raw = rows.flat().map(a => a ? a.trim() : "").filter(a => a.length > 0);
         addressCache = [...new Set(raw)]; 
         
         lastFetchTime = now;
-        console.log(`[Confiscate] Cached ${addressCache.length} unique addresses.`);
         return addressCache;
     } catch (err) {
         console.error("Error fetching addresses:", err);
@@ -37,24 +35,14 @@ async function getPropertyAddresses() {
 export default {
     data: new SlashCommandBuilder()
         .setName("confiscateproperty")
-        .setDescription("Confiscate a property (Sets Faction to 'None' and logs history).")
-        // 1. ADDRESS is now the main autocomplete field
-        .addStringOption(o => o.setName("address").setDescription("Property Address").setRequired(true).setAutocomplete(true))
-        // 2. Date is just a text field
-        .addStringOption(o => o.setName("date").setDescription("Date Given (YYYY-MM-DD) - For verification context").setRequired(true))
-        .addStringOption(o => o.setName("type").setDescription("Property Type").setRequired(true)
-            .addChoices(
-                { name: "Property", value: "Property" },
-                { name: "Warehouse", value: "Warehouse" },
-                { name: "HQ", value: "HQ" }
-            )
-        )
-        .addBooleanOption(o => o.setName("confiscated").setDescription("Confirm Confiscation").setRequired(true)),
+        .setDescription("Instantly confiscate a property (Sets Faction to 'None' & logs it).")
+        .addStringOption(o => o.setName("address").setDescription("Select Property Address").setRequired(true).setAutocomplete(true))
+        // Kept Date optional just in case the original record is missing a date
+        .addStringOption(o => o.setName("date").setDescription("Original Date Given (Optional override)").setRequired(false)),
 
     async autocomplete(interaction) {
         const focusedOption = interaction.options.getFocused(true);
 
-        // STRICT CHECK: Only run this if the user is typing in "address"
         if (focusedOption.name === "address") {
             const choices = await getPropertyAddresses();
             const filtered = choices
@@ -63,7 +51,6 @@ export default {
             
             await interaction.respond(filtered.map(c => ({ name: c, value: c })));
         } else {
-            // If they are somehow typing in another field, return nothing
             await interaction.respond([]);
         }
     },
@@ -80,11 +67,7 @@ export default {
         await interaction.deferReply({ ephemeral: true });
 
         const addressInput = interaction.options.getString("address");
-        const dateGivenInput = interaction.options.getString("date");
-        const typeInput = interaction.options.getString("type");
-        const confiscatedFlag = interaction.options.getBoolean("confiscated");
-
-        if (!confiscatedFlag) return interaction.editReply("❌ Action cancelled. 'Confiscated' must be set to True.");
+        const dateInput = interaction.options.getString("date");
 
         try {
             // 1. Search PropertyRewards (Cols A-G)
@@ -101,7 +84,6 @@ export default {
 
             for (let i = 1; i < rows.length; i++) {
                 const r = rows[i];
-                // Check Column C (Index 2)
                 if (r[2] && r[2].trim().toLowerCase() === addressNorm) {
                     match = r;
                     sheetRow = i + 1; // 1-based index
@@ -113,26 +95,31 @@ export default {
                 return interaction.editReply(`❌ No record found for address: **${addressInput}**.`);
             }
 
-            // 3. Capture Old Data
-            const oldFaction = match[1] || "Unknown Faction"; // Column B
-            const oldDateGiven = match[0] || dateGivenInput;
-            const oldType = match[3] || typeInput;
+            // 3. Capture Existing Data
+            const oldDateGiven = match[0] || dateInput || "Unknown Date"; // Col A
+            const oldFaction = match[1] || "Unknown Faction";             // Col B
+            const existingType = match[3] || "Property";                  // Col D (Auto-detected)
 
-            // 4. Update the Row
-            const today = new Date().toISOString().split('T')[0]; // YYYY-MM-DD
+            // 4. Check if already confiscated
+            if (match[4] && match[4].toLowerCase() === "true") {
+                return interaction.editReply(`⚠️ **Warning:** **${addressInput}** is already marked as confiscated.`);
+            }
+
+            // 5. Update the Row
+            const today = new Date().toISOString().split('T')[0];
             const staffName = interaction.user.tag;
 
             const updatedRow = [
                 oldDateGiven,
-                "None",       // B: Faction wiped to None
-                addressInput, // C: Address
-                oldType,      // D: Type
-                "TRUE",       // E: Confiscated
-                today,        // F: Date Confiscated
-                staffName     // G: Staff Member
+                "None",        // Faction -> None
+                addressInput,
+                existingType,  // Preserves existing Type
+                "TRUE",        // Confiscated
+                today,         // Date Confiscated
+                staffName      // Staff
             ];
 
-            // 5. Commit to Google Sheets
+            // 6. Commit Update
             await sheets.spreadsheets.values.update({
                 spreadsheetId: GOOGLE_SHEET_ID,
                 range: `PropertyRewards!A${sheetRow}:G${sheetRow}`,
@@ -140,23 +127,21 @@ export default {
                 requestBody: { values: [updatedRow] }
             });
 
-            // 6. Write to Audit Log (ConfiscationLogs)
+            // 7. Write to Audit Log
             await sheets.spreadsheets.values.append({
                 spreadsheetId: GOOGLE_SHEET_ID,
                 range: "ConfiscationLogs!A:E",
                 valueInputOption: "USER_ENTERED",
                 requestBody: { 
-                    values: [[today, oldFaction, addressInput, typeInput, staffName]] 
+                    values: [[today, oldFaction, addressInput, existingType, staffName]] 
                 }
             });
 
             return interaction.editReply(
                 `✅ **Property Confiscated**\n` +
                 `🏠 **Address:** ${addressInput}\n` +
-                `📉 **Previous Owner:** ${oldFaction}\n` +
-                `✨ **New Owner:** None\n` +
+                `📉 **From:** ${oldFaction}\n` +
                 `📅 **Date:** ${today}\n` +
-                `👮 **Staff:** ${staffName}\n` +
                 `📂 *Logged to Audit Trail.*`
             );
 
