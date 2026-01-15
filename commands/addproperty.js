@@ -69,7 +69,7 @@ export default {
     async execute(interaction) {
         // Role check
         const memberRoles = interaction.member?.roles?.cache;
-        const hasManagement = memberRoles ? memberRoles.some(r => r.name === "Management") : false;
+        const hasManagement = memberRoles ? memberRoles.some(r => r.name === "[ECRP] FM Leadership") : false;
 
         if (!hasManagement) {
             return interaction.reply({ 
