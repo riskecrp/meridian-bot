@@ -101,7 +101,9 @@ client.on(Events.InteractionCreate, async interaction => {
             console.error(error);
         }
     }
-    // --- BUTTON HANDLER (NEW) ---
+   // ... inside client.on(Events.InteractionCreate, ...)
+
+    // --- BUTTON HANDLER ---
     else if (interaction.isButton()) {
         const { customId } = interaction;
 
@@ -123,22 +125,24 @@ client.on(Events.InteractionCreate, async interaction => {
             const newTime = Date.now() + addMs;
             const newReadable = new Date(newTime).toISOString();
             
-            // Data Setup
-            // We pull the original message text from the Embed itself
+            // Extract original data from Embed
             const originalEmbed = interaction.message.embeds[0];
             const originalMsg = originalEmbed ? originalEmbed.description : "Snoozed Reminder";
             
             const userId = interaction.user.id;
             const channelId = interaction.channelId;
-            // The person clicking snooze gets the ping next time
             const targetString = `<@${userId}>`; 
             const newUUID = Math.random().toString(36).substring(2, 8);
 
+            // LOGIC: If snooze is short (<30m), skip the warning by setting status to "WARNED"
+            // If snooze is long (1h), set to "ACTIVE" so they get a warning later
+            const initialStatus = addMs <= 30 * 60 * 1000 ? "WARNED" : "ACTIVE";
+
             try {
-                // WRITE TO SHEET: Add a new temporary reminder row
+                // Add new temporary reminder row (9 Columns)
                 await sheets.spreadsheets.values.append({
                     spreadsheetId: GOOGLE_SHEET_ID,
-                    range: "Reminders!A:H",
+                    range: "Reminders!A:I", // Updated Range
                     valueInputOption: "USER_ENTERED",
                     requestBody: {
                         values: [[
@@ -147,9 +151,10 @@ client.on(Events.InteractionCreate, async interaction => {
                             `(Snoozed) ${originalMsg}`, 
                             newTime, 
                             newReadable, 
-                            "None", // Snoozes do not repeat
+                            "None", 
                             targetString, 
-                            newUUID
+                            newUUID,
+                            initialStatus // Col I: Prevents double-pinging
                         ]]
                     }
                 });
