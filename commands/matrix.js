@@ -65,7 +65,7 @@ export default {
         .addSubcommand(sub => sub.setName("view").setDescription("View clean faction dashboard & stats.")
             .addStringOption(o => o.setName("name").setDescription("Faction Name").setRequired(true).setAutocomplete(true))
         )
-        // 3. VIEW TEAM (UPDATED)
+        // 3. VIEW TEAM
         .addSubcommand(sub => sub.setName("viewteam").setDescription("View comprehensive Team Report (Lead + Guides).")
             .addUserOption(o => o.setName("user").setDescription("The Staff Member (Lead or Guide)").setRequired(true))
         )
@@ -77,7 +77,7 @@ export default {
         .addSubcommand(sub => sub.setName("setdiscord").setDescription("Set Discord Link.").addStringOption(o => o.setName("name").setDescription("Faction").setRequired(true).setAutocomplete(true)).addStringOption(o => o.setName("link").setDescription("URL").setRequired(true)))
         // ACTIONS
         .addSubcommand(sub => sub.setName("swaplead").setDescription("Bulk transfer factions.").addUserOption(o => o.setName("old_lead").setDescription("Old Lead").setRequired(true)).addUserOption(o => o.setName("new_lead").setDescription("New Lead").setRequired(true)))
-        // ROSTER (UPDATED)
+        // ROSTER
         .addSubcommand(sub => sub.setName("roster").setDescription("Add/Update Staff Member in Matrix.")
             .addUserOption(o => o.setName("user").setDescription("Staff Member").setRequired(true))
             .addRoleOption(o => o.setName("role").setDescription("Ping Role").setRequired(true))
@@ -114,21 +114,17 @@ export default {
         const factionName = interaction.options.getString("name"); 
 
         try {
-            // --- ROSTER (UPDATED) ---
+            // --- ROSTER ---
             if (sub === "roster") {
                 const user = interaction.options.getUser("user");
                 const role = interaction.options.getRole("role");
                 const team = interaction.options.getString("team_name");
                 const rank = interaction.options.getString("rank");
 
-                // 1. Read StaffRoster
                 const res = await sheets.spreadsheets.values.get({ spreadsheetId: GOOGLE_SHEET_ID, range: "StaffRoster!A:A" });
                 const rows = (res.data.values || []).flat();
-                
                 const rowIndex = rows.indexOf(user.id);
                 
-                // 2. Add or Update
-                // Structure: [UserID, RoleID, Username, TeamName, Rank]
                 const rowData = [user.id, role.id, user.username, team, rank];
 
                 if (rowIndex > -1) {
@@ -151,29 +147,25 @@ export default {
                 }
             }
 
-            // --- VIEW TEAM (UPDATED) ---
+            // --- VIEW TEAM ---
             if (sub === "viewteam") {
                 const targetUser = interaction.options.getUser("user");
                 
-                // 1. Find User in StaffRoster to get their Team
                 const rosterRes = await sheets.spreadsheets.values.get({ spreadsheetId: GOOGLE_SHEET_ID, range: "StaffRoster!A:E" });
                 const rosterRows = rosterRes.data.values || [];
                 const staffEntry = rosterRows.find(r => r[0] === targetUser.id);
 
                 if (!staffEntry) return interaction.editReply(`❌ **${targetUser.username}** is not in the Staff Roster.`);
 
-                const myTeam = staffEntry[3]; // Col D = Team Name
-                const myRank = staffEntry[4]; // Col E = Rank
+                const myTeam = staffEntry[3]; 
+                const myRank = staffEntry[4]; 
 
-                // 2. Find ALL members of this Team
                 const teamMembers = rosterRows.filter(r => r[3] === myTeam);
-                const teamIds = teamMembers.map(r => r[0]); // All User IDs in this team
+                const teamIds = teamMembers.map(r => r[0]); 
 
-                // 3. Find ALL factions assigned to ANY of these IDs
                 const factionRes = await sheets.spreadsheets.values.get({ spreadsheetId: GOOGLE_SHEET_ID, range: "FactionData!A:G" });
                 const allFactions = factionRes.data.values || [];
                 
-                // Filter factions where the Lead ID is in our teamIds list
                 const teamFactions = allFactions.filter(r => teamIds.includes(r[1]));
 
                 const embed = new EmbedBuilder()
@@ -181,12 +173,10 @@ export default {
                     .setDescription(`**Requested by:** ${targetUser} (${myRank})\n**Team Members:** ${teamMembers.length}\n**Total Factions:** ${teamFactions.length}`)
                     .setColor(0xFFA500);
 
-                // Group by Staff Member
                 teamMembers.forEach(member => {
                     const memberId = member[0];
                     const memberName = member[2];
                     const memberRank = member[4];
-                    
                     const myFactions = teamFactions.filter(f => f[1] === memberId);
                     
                     if (myFactions.length > 0) {
@@ -195,7 +185,6 @@ export default {
                             const tier = f[2] || "0";
                             return `• ${name} (T${tier})`;
                         }).join("\n");
-                        
                         embed.addFields({ name: `${memberName} (${memberRank})`, value: factionList, inline: false });
                     } else {
                         embed.addFields({ name: `${memberName} (${memberRank})`, value: "_No factions assigned._", inline: false });
@@ -224,7 +213,7 @@ export default {
                 return interaction.editReply(`✅ **${factionName}** created.`);
             }
 
-            // --- VIEW FACTION ---
+            // --- VIEW FACTION (LAYOUT UPDATED) ---
             if (sub === "view") {
                 const rowNum = await findFactionRow("FactionData", factionName);
                 if (!rowNum) return interaction.editReply(`❌ Faction **${factionName}** not found.`);
@@ -235,18 +224,15 @@ export default {
                 const leadId = row[1];
                 const leadDisplay = (leadId && leadId !== "None") ? `<@${leadId}>` : "_None_";
                 
-                // LEADERSHIP LOOKUP
                 let roleStatus = "_Not Assigned_";
                 if (leadId && leadId !== "None") {
                     const rosterRes = await sheets.spreadsheets.values.get({ spreadsheetId: GOOGLE_SHEET_ID, range: "StaffRoster!A:E" });
                     const rosterRow = (rosterRes.data.values || []).find(r => r[0] === leadId);
                     if (rosterRow) {
-                        // rosterRow: [ID, Role, Name, Team, Rank]
                         roleStatus = `${rosterRow[4]} of ${rosterRow[3]} (<@&${rosterRow[1]}>)`; 
                     }
                 }
 
-                // STATS LOGIC (Kept same as yours)
                 const logsRes = await sheets.spreadsheets.values.get({ spreadsheetId: GOOGLE_SHEET_ID, range: "Scene Logs!A:C" });
                 const logRows = logsRes.data.values || [];
                 let allTime = 0;
@@ -277,7 +263,8 @@ export default {
                     .setTitle(`📂 ${row[0]} - Tier ${row[2] || 0}`)
                     .setColor(0x2b2d31)
                     .addFields(
-                        { name: "➡️ Information", value: `**Lead:** ${leadDisplay}\n**Staff:** ${roleStatus}\n**Last Promoted:** ${row[3] || "N/A"}`, inline: true },
+                        // UPDATED LAYOUT: Lead -> Promoted -> Staff
+                        { name: "➡️ Information", value: `**Lead:** ${leadDisplay}\n**Last Promoted:** ${row[3] || "N/A"}\n**Staff:** ${roleStatus}`, inline: true },
                         { name: "➡️ Scenes Ran", value: `**30 Days:** ${monthCount}\n**All Time:** ${allTime}`, inline: false },
                         { name: "🔗 Quick Links", value: linkBlock, inline: false },
                         { name: "🎁 Recent Rewards", value: rewards.length ? rewards.slice(0, 5).join("\n") : "_No rewards in last 30 days._", inline: false }
