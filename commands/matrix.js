@@ -52,9 +52,7 @@ export default {
     data: new SlashCommandBuilder()
         .setName("matrix")
         .setDescription("Faction Management System")
-        // 1. OVERVIEW (NEW)
         .addSubcommand(sub => sub.setName("overview").setDescription("View the full Staff Roster & Team hierarchy."))
-        // 2. CREATE
         .addSubcommand(sub => sub.setName("create").setDescription("Initialize a new faction.")
             .addStringOption(o => o.setName("name").setDescription("Faction Name").setRequired(true))
             .addUserOption(o => o.setName("lead").setDescription("Team Lead").setRequired(false))
@@ -63,11 +61,9 @@ export default {
             .addStringOption(o => o.setName("forum_link").setDescription("Forum URL").setRequired(false))
             .addStringOption(o => o.setName("discord_link").setDescription("Discord Invite URL").setRequired(false))
         )
-        // 3. VIEW FACTION
         .addSubcommand(sub => sub.setName("view").setDescription("View clean faction dashboard & stats.")
             .addStringOption(o => o.setName("name").setDescription("Faction Name").setRequired(true).setAutocomplete(true))
         )
-        // 4. VIEW TEAM
         .addSubcommand(sub => sub.setName("viewteam").setDescription("View detailed Report for a specific Staff Member.")
             .addUserOption(o => o.setName("user").setDescription("The Staff Member").setRequired(true))
         )
@@ -79,7 +75,6 @@ export default {
         .addSubcommand(sub => sub.setName("setdiscord").setDescription("Set Discord Link.").addStringOption(o => o.setName("name").setDescription("Faction").setRequired(true).setAutocomplete(true)).addStringOption(o => o.setName("link").setDescription("URL").setRequired(true)))
         // ACTIONS
         .addSubcommand(sub => sub.setName("swaplead").setDescription("Bulk transfer factions.").addUserOption(o => o.setName("old_lead").setDescription("Old Lead").setRequired(true)).addUserOption(o => o.setName("new_lead").setDescription("New Lead").setRequired(true)))
-        // ROSTER
         .addSubcommand(sub => sub.setName("roster").setDescription("Add/Update Staff Member in Matrix.")
             .addUserOption(o => o.setName("user").setDescription("Staff Member").setRequired(true))
             .addRoleOption(o => o.setName("role").setDescription("The Team/Ping Role").setRequired(true))
@@ -115,53 +110,58 @@ export default {
         const factionName = interaction.options.getString("name"); 
 
         try {
-            // --- OVERVIEW (NEW) ---
+            // --- OVERVIEW (UPDATED LAYOUT) ---
             if (sub === "overview") {
-                // 1. Fetch All Data
                 const rosterRes = await sheets.spreadsheets.values.get({ spreadsheetId: GOOGLE_SHEET_ID, range: "StaffRoster!A:C" });
-                const factionRes = await sheets.spreadsheets.values.get({ spreadsheetId: GOOGLE_SHEET_ID, range: "FactionData!A:B" });
+                const factionRes = await sheets.spreadsheets.values.get({ spreadsheetId: GOOGLE_SHEET_ID, range: "FactionData!A:G" });
 
                 const roster = rosterRes.data.values || [];
-                const factions = factionRes.data.values || [];
+                const allFactions = factionRes.data.values || [];
 
-                if (roster.length === 0) return interaction.editReply("❌ The Staff Roster is empty.");
+                if (roster.length === 0) return interaction.editReply("❌ Staff Roster is empty.");
 
-                // 2. Group by Team (Role ID)
-                const teams = {}; // { roleId: { leads: [], guides: [] } }
+                const teams = {};
 
                 roster.forEach(row => {
                     const userId = row[0];
                     const roleId = row[1];
-                    const rank = row[2]; 
+                    const rank = row[2]?.toLowerCase() || "";
 
-                    if (!teams[roleId]) teams[roleId] = { leads: [], guides: [] };
-
-                    // Count factions assigned to this user
-                    const count = factions.filter(f => f[1] === userId).length;
-                    const entry = { userId, count };
-
-                    if (rank.toLowerCase().includes("lead")) teams[roleId].leads.push(entry);
-                    else teams[roleId].guides.push(entry);
+                    if (!teams[roleId]) teams[roleId] = { leads: [], guides: [], teamIds: [] };
+                    
+                    teams[roleId].teamIds.push(userId);
+                    if (rank.includes("lead")) teams[roleId].leads.push(userId);
+                    else teams[roleId].guides.push(userId);
                 });
 
-                // 3. Build Embed
                 const embed = new EmbedBuilder()
-                    .setTitle("🛡️ FM Staff Organization")
-                    .setDescription("Overview of all Teams, Staff Members, and assigned workloads.")
+                    .setTitle("🛡️ FM Team Overview")
                     .setColor(0x0099FF)
                     .setTimestamp();
 
-                for (const [roleId, members] of Object.entries(teams)) {
-                    const totalFactions = [...members.leads, ...members.guides].reduce((acc, cur) => acc + cur.count, 0);
+                for (const [roleId, data] of Object.entries(teams)) {
+                    const leadText = data.leads.length > 0 ? data.leads.map(id => `<@${id}>`).join(", ") : "_None_";
+                    const guideText = data.guides.length > 0 ? data.guides.map(id => `<@${id}>`).join(" | ") : "_None_";
+                    const teamFactions = allFactions.filter(f => data.teamIds.includes(f[1]));
 
-                    // Format Lists
-                    const formatList = (list) => list.length > 0 
-                        ? list.map(m => `<@${m.userId}> • **${m.count}**`).join("\n") 
-                        : "_Vacant_";
+                    let factionText = "_No assigned factions._";
+                    if (teamFactions.length > 0) {
+                        factionText = teamFactions.map(f => {
+                            const name = f[0];
+                            const tier = f[2] || "0";
+                            const feed = f[4] ? `[Feedback](https://discord.com/channels/${interaction.guildId}/${f[4]})` : "❌";
+                            const forum = f[5] ? `[Forum](${f[5]})` : "❌";
+                            const disc = f[6] ? `[Discord](${f[6]})` : "❌";
+                            return `${name} | Tier ${tier} | ${disc} - ${feed} - ${forum}`;
+                        }).join("\n");
+                    }
+
+                    // UPDATED BLOCK FORMAT: Newlines added
+                    const block = `**Team Lead:**\n${leadText}\n\n**Team Members:**\n${guideText}\n\n**Team Factions:**\n${factionText}`;
 
                     embed.addFields({
-                        name: `🛡️ Team Overview (Total: ${totalFactions} Factions)`,
-                        value: `**Team Role:** <@&${roleId}>\n\n👑 **Leads:**\n${formatList(members.leads)}\n\n🧭 **Guides:**\n${formatList(members.guides)}`,
+                        name: `Team: <@&${roleId}>`,
+                        value: block,
                         inline: false
                     });
                 }
