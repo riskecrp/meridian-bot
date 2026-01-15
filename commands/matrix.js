@@ -52,7 +52,9 @@ export default {
     data: new SlashCommandBuilder()
         .setName("matrix")
         .setDescription("Faction Management System")
-        // 1. CREATE
+        // 1. OVERVIEW (NEW)
+        .addSubcommand(sub => sub.setName("overview").setDescription("View the full Staff Roster & Team hierarchy."))
+        // 2. CREATE
         .addSubcommand(sub => sub.setName("create").setDescription("Initialize a new faction.")
             .addStringOption(o => o.setName("name").setDescription("Faction Name").setRequired(true))
             .addUserOption(o => o.setName("lead").setDescription("Team Lead").setRequired(false))
@@ -61,13 +63,13 @@ export default {
             .addStringOption(o => o.setName("forum_link").setDescription("Forum URL").setRequired(false))
             .addStringOption(o => o.setName("discord_link").setDescription("Discord Invite URL").setRequired(false))
         )
-        // 2. VIEW FACTION
+        // 3. VIEW FACTION
         .addSubcommand(sub => sub.setName("view").setDescription("View clean faction dashboard & stats.")
             .addStringOption(o => o.setName("name").setDescription("Faction Name").setRequired(true).setAutocomplete(true))
         )
-        // 3. VIEW TEAM
-        .addSubcommand(sub => sub.setName("viewteam").setDescription("View comprehensive Team Report (Lead + Guides).")
-            .addUserOption(o => o.setName("user").setDescription("The Staff Member (Lead or Guide)").setRequired(true))
+        // 4. VIEW TEAM
+        .addSubcommand(sub => sub.setName("viewteam").setDescription("View detailed Report for a specific Staff Member.")
+            .addUserOption(o => o.setName("user").setDescription("The Staff Member").setRequired(true))
         )
         // SETTERS
         .addSubcommand(sub => sub.setName("settier").setDescription("Update Tier.").addStringOption(o => o.setName("name").setDescription("Faction").setRequired(true).setAutocomplete(true)).addIntegerOption(o => o.setName("tier").setDescription("Tier (1-9)").setMinValue(1).setMaxValue(9).setRequired(true)))
@@ -77,7 +79,7 @@ export default {
         .addSubcommand(sub => sub.setName("setdiscord").setDescription("Set Discord Link.").addStringOption(o => o.setName("name").setDescription("Faction").setRequired(true).setAutocomplete(true)).addStringOption(o => o.setName("link").setDescription("URL").setRequired(true)))
         // ACTIONS
         .addSubcommand(sub => sub.setName("swaplead").setDescription("Bulk transfer factions.").addUserOption(o => o.setName("old_lead").setDescription("Old Lead").setRequired(true)).addUserOption(o => o.setName("new_lead").setDescription("New Lead").setRequired(true)))
-        // ROSTER (OPTIMIZED)
+        // ROSTER
         .addSubcommand(sub => sub.setName("roster").setDescription("Add/Update Staff Member in Matrix.")
             .addUserOption(o => o.setName("user").setDescription("Staff Member").setRequired(true))
             .addRoleOption(o => o.setName("role").setDescription("The Team/Ping Role").setRequired(true))
@@ -101,7 +103,7 @@ export default {
         const hasLeadership = interaction.member.roles.cache.has(ROLE_LEADERSHIP_ID);
         
         const sub = interaction.options.getSubcommand();
-        const isView = (sub === 'view' || sub === 'viewteam');
+        const isView = (sub === 'view' || sub === 'viewteam' || sub === 'overview');
 
         if (isView) {
             if (!hasFM && !hasLeadership) return interaction.reply({ content: "❌ Permission Denied: [ECRP] Faction Management required.", ephemeral: true });
@@ -113,7 +115,61 @@ export default {
         const factionName = interaction.options.getString("name"); 
 
         try {
-            // --- ROSTER (Simplified: ID Only) ---
+            // --- OVERVIEW (NEW) ---
+            if (sub === "overview") {
+                // 1. Fetch All Data
+                const rosterRes = await sheets.spreadsheets.values.get({ spreadsheetId: GOOGLE_SHEET_ID, range: "StaffRoster!A:C" });
+                const factionRes = await sheets.spreadsheets.values.get({ spreadsheetId: GOOGLE_SHEET_ID, range: "FactionData!A:B" });
+
+                const roster = rosterRes.data.values || [];
+                const factions = factionRes.data.values || [];
+
+                if (roster.length === 0) return interaction.editReply("❌ The Staff Roster is empty.");
+
+                // 2. Group by Team (Role ID)
+                const teams = {}; // { roleId: { leads: [], guides: [] } }
+
+                roster.forEach(row => {
+                    const userId = row[0];
+                    const roleId = row[1];
+                    const rank = row[2]; 
+
+                    if (!teams[roleId]) teams[roleId] = { leads: [], guides: [] };
+
+                    // Count factions assigned to this user
+                    const count = factions.filter(f => f[1] === userId).length;
+                    const entry = { userId, count };
+
+                    if (rank.toLowerCase().includes("lead")) teams[roleId].leads.push(entry);
+                    else teams[roleId].guides.push(entry);
+                });
+
+                // 3. Build Embed
+                const embed = new EmbedBuilder()
+                    .setTitle("🛡️ FM Staff Organization")
+                    .setDescription("Overview of all Teams, Staff Members, and assigned workloads.")
+                    .setColor(0x0099FF)
+                    .setTimestamp();
+
+                for (const [roleId, members] of Object.entries(teams)) {
+                    const totalFactions = [...members.leads, ...members.guides].reduce((acc, cur) => acc + cur.count, 0);
+
+                    // Format Lists
+                    const formatList = (list) => list.length > 0 
+                        ? list.map(m => `<@${m.userId}> • **${m.count}**`).join("\n") 
+                        : "_Vacant_";
+
+                    embed.addFields({
+                        name: `🛡️ Team Overview (Total: ${totalFactions} Factions)`,
+                        value: `**Team Role:** <@&${roleId}>\n\n👑 **Leads:**\n${formatList(members.leads)}\n\n🧭 **Guides:**\n${formatList(members.guides)}`,
+                        inline: false
+                    });
+                }
+
+                return interaction.editReply({ embeds: [embed] });
+            }
+
+            // --- ROSTER ---
             if (sub === "roster") {
                 const user = interaction.options.getUser("user");
                 const role = interaction.options.getRole("role");
@@ -123,7 +179,6 @@ export default {
                 const rows = (res.data.values || []).flat();
                 const rowIndex = rows.indexOf(user.id);
                 
-                // Store: [UserID, RoleID, Rank]
                 const rowData = [user.id, role.id, rank];
 
                 if (rowIndex > -1) {
@@ -146,26 +201,22 @@ export default {
                 }
             }
 
-            // --- VIEW TEAM (ID Based) ---
+            // --- VIEW TEAM ---
             if (sub === "viewteam") {
                 const targetUser = interaction.options.getUser("user");
                 
-                // 1. Fetch Roster
                 const rosterRes = await sheets.spreadsheets.values.get({ spreadsheetId: GOOGLE_SHEET_ID, range: "StaffRoster!A:C" });
                 const rosterRows = rosterRes.data.values || [];
                 
-                // Find Target in Col A
                 const staffEntry = rosterRows.find(r => r[0] === targetUser.id);
                 if (!staffEntry) return interaction.editReply(`❌ **${targetUser.username}** is not in the Staff Roster.`);
 
-                const myRoleId = staffEntry[1]; // Col B: Role ID
-                const myRank = staffEntry[2];   // Col C: Rank
+                const myRoleId = staffEntry[1];
+                const myRank = staffEntry[2]; 
 
-                // 2. Find Team Members (Matching Role ID)
                 const teamMembers = rosterRows.filter(r => r[1] === myRoleId);
                 const teamIds = teamMembers.map(r => r[0]); 
 
-                // 3. Find Factions
                 const factionRes = await sheets.spreadsheets.values.get({ spreadsheetId: GOOGLE_SHEET_ID, range: "FactionData!A:G" });
                 const allFactions = factionRes.data.values || [];
                 const teamFactions = allFactions.filter(r => teamIds.includes(r[1]));
@@ -180,7 +231,6 @@ export default {
                     const memberRank = member[2];
                     const myFactions = teamFactions.filter(f => f[1] === memberId);
                     
-                    // Display <@UserID> instead of name
                     const header = `<@${memberId}> (${memberRank})`;
                     
                     if (myFactions.length > 0) {
@@ -233,7 +283,6 @@ export default {
                     const rosterRes = await sheets.spreadsheets.values.get({ spreadsheetId: GOOGLE_SHEET_ID, range: "StaffRoster!A:C" });
                     const rosterRow = (rosterRes.data.values || []).find(r => r[0] === leadId);
                     if (rosterRow) {
-                        // Col C (Rank) + Col B (Role ID)
                         roleStatus = `${rosterRow[2]} (<@&${rosterRow[1]}>)`; 
                     }
                 }
