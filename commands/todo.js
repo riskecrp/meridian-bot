@@ -46,19 +46,30 @@ export default {
             const targetUser = interaction.options.getUser("target_user");
             const targetRole = interaction.options.getRole("target_role");
 
-            // Validation: Must have at least one target
-            if (!targetUser && !targetRole) {
-                return interaction.reply({ content: "❌ You must assign the task to either a **User** or a **Role**.", ephemeral: true });
-            }
-
             await interaction.deferReply({ ephemeral: true });
 
             try {
                 // Prepare Data
                 const id = Date.now().toString(); // Simple unique ID
-                const targetId = targetUser ? targetUser.id : targetRole.id;
-                const targetType = targetUser ? "User" : "Role";
                 const createdDate = getTodayDate();
+                
+                let targetId, targetType, targetName;
+
+                // LOGIC: Determine Target (User -> Role -> Default to Private)
+                if (targetUser) {
+                    targetId = targetUser.id;
+                    targetType = "User";
+                    targetName = targetUser.username;
+                } else if (targetRole) {
+                    targetId = targetRole.id;
+                    targetType = "Role";
+                    targetName = targetRole.name;
+                } else {
+                    // DEFAULT: Private Task
+                    targetId = interaction.user.id;
+                    targetType = "Private";
+                    targetName = "Me (Private)";
+                }
                 
                 // Save to Google Sheets
                 // Columns: [ID, Description, TargetID, TargetType, ClaimedByID, CreatedAt]
@@ -72,11 +83,15 @@ export default {
                 // Send Ping Notification
                 const channel = interaction.guild.channels.cache.get(NOTIFICATION_CHANNEL_ID);
                 if (channel) {
-                    const ping = targetUser ? `${targetUser}` : `${targetRole}`;
-                    await channel.send(`📝 **New Task:** ${ping} \n> ${desc}`);
+                    let pingStr = "";
+                    if (targetType === "User") pingStr = `<@${targetId}>`;
+                    else if (targetType === "Role") pingStr = `<@&${targetId}>`;
+                    else pingStr = `<@${interaction.user.id}> (Private)`;
+
+                    await channel.send(`📝 **New Task:** ${pingStr} \n> ${desc}`);
                 }
 
-                return interaction.editReply(`✅ Task added for **${targetUser ? targetUser.username : targetRole.name}**.`);
+                return interaction.editReply(`✅ Task added for **${targetName}**.`);
 
             } catch (err) {
                 console.error(err);
@@ -98,12 +113,17 @@ export default {
                 if (rows.length < 2) return interaction.editReply("✅ No tasks found."); // Row 0 is headers
 
                 // FILTER: Find tasks relevant to this user
-                // Match: TargetID is UserID OR TargetID is one of User's Roles OR ClaimedBy is UserID
+                // Match: 
+                // 1. ClaimedBy is UserID
+                // 2. TargetID is UserID (covers "User" and "Private" types)
+                // 3. TargetID is one of User's Roles
                 const myTasks = rows.slice(1).filter(row => {
                     const [id, desc, targetId, targetType, claimedBy] = row;
+                    
                     if (claimedBy === interaction.user.id) return true; // I claimed it
-                    if (targetType === "User" && targetId === interaction.user.id) return true; // Assigned to me
+                    if ((targetType === "User" || targetType === "Private") && targetId === interaction.user.id) return true; // Assigned to me
                     if (targetType === "Role" && interaction.member.roles.cache.has(targetId)) return true; // Assigned to my role
+                    
                     return false;
                 });
 
@@ -115,7 +135,8 @@ export default {
                     .setColor(0x00FF00)
                     .setDescription(myTasks.map(t => {
                         const isClaimed = t[4] !== "None" ? "🔒 _Claimed_" : "👐 _Open_";
-                        return `• **${t[1]}** (${isClaimed})`;
+                        const typeLabel = t[3] === "Private" ? "🔒 [Private]" : "";
+                        return `• **${t[1]}** ${typeLabel} (${isClaimed})`;
                     }).join("\n").substring(0, 4096));
 
                 // Build Dropdown
