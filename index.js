@@ -166,6 +166,49 @@ client.on(Events.InteractionCreate, async interaction => {
             }
         }
     }
+    // ==========================================
+// BACKGROUND TASK: TODO REMINDERS
+// ==========================================
+setInterval(async () => {
+    try {
+        const res = await sheets.spreadsheets.values.get({ spreadsheetId: GOOGLE_SHEET_ID, range: "ToDoList!A:G" });
+        const rows = res.data.values || [];
+        if (rows.length < 2) return;
+
+        const now = Date.now();
+
+        for (let i = 1; i < rows.length; i++) {
+            const [id, desc, targetId, targetType, claimedBy, createdAt, nextReminder] = rows[i];
+            
+            // Logic: Must be claimed, have a reminder set, and time must be passed
+            if (claimedBy && claimedBy !== "None" && nextReminder && parseInt(nextReminder) <= now) {
+                
+                try {
+                    // Send DM
+                    const user = await client.users.fetch(claimedBy);
+                    if (user) {
+                        await user.send(`**Task Reminder:**\n${desc}\n\nPlease complete this task or visit the server to manage it.`);
+                    }
+                } catch (e) {
+                    console.log(`Could not DM user ${claimedBy} (Privacy settings or blocked)`);
+                }
+
+                // Update Reminder to +24 hours
+                const newTime = (now + 86400000).toString();
+                
+                // Update Column G (Index 6) for this row
+                await sheets.spreadsheets.values.update({
+                    spreadsheetId: GOOGLE_SHEET_ID,
+                    range: `ToDoList!G${i + 1}`,
+                    valueInputOption: "USER_ENTERED",
+                    requestBody: { values: [[newTime]] }
+                });
+            }
+        }
+    } catch (err) {
+        console.error("Reminder Loop Error:", err);
+    }
+}, 3600000); // Checks every 1 hour
 });
 
 client.login(process.env.DISCORD_TOKEN);
