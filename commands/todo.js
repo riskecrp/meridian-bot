@@ -69,7 +69,7 @@ export default {
                     isPrivate = true;
                 }
                 
-                // Save to Google Sheets (Added empty column G for Reminder)
+                // Save to Google Sheets
                 await sheets.spreadsheets.values.append({
                     spreadsheetId: GOOGLE_SHEET_ID,
                     range: "ToDoList!A:G",
@@ -82,7 +82,6 @@ export default {
                     const channel = interaction.guild.channels.cache.get(NOTIFICATION_CHANNEL_ID);
                     if (channel) {
                         let pingStr = targetType === "User" ? `<@${targetId}>` : `<@&${targetId}>`;
-                        // Specific Verbiage requested
                         await channel.send(`${pingStr} A new task has been added to the To Do list.\n-# Type /todo view to see tasks assigned to you and your roles.`);
                     }
                 }
@@ -155,7 +154,7 @@ export default {
 
                     // Initial Control Buttons
                     const btnRow = new ActionRowBuilder();
-                    const claimBtn = new ButtonBuilder().setCustomId(`claim_${id}`).setLabel("Claim Task").setStyle(ButtonStyle.Primary).setDisabled(!isUnclaimed && !isMyClaim); // Can claim if open, or if I already own it (to re-trigger logic if needed, though mostly for open)
+                    const claimBtn = new ButtonBuilder().setCustomId(`claim_${id}`).setLabel("Claim Task").setStyle(ButtonStyle.Primary).setDisabled(!isUnclaimed && !isMyClaim);
                     const completeBtn = new ButtonBuilder().setCustomId(`complete_${id}`).setLabel("Complete & Remove").setStyle(ButtonStyle.Success);
 
                     btnRow.addComponents(claimBtn, completeBtn);
@@ -170,13 +169,11 @@ export default {
                     const btnCollector = controlMsg.createMessageComponentCollector({ componentType: ComponentType.Button, time: 60000 });
 
                     btnCollector.on('collect', async b => {
-                        // RE-FETCH sheet to ensure fresh state
                         const freshRes = await sheets.spreadsheets.values.get({ spreadsheetId: GOOGLE_SHEET_ID, range: "ToDoList!A:G" });
                         const freshRows = freshRes.data.values || [];
                         const freshIndex = freshRows.findIndex(r => r[0] === id);
                         if (freshIndex === -1) return b.update({ content: "Task no longer exists.", components: [] });
 
-                        // --- COMPLETE LOGIC ---
                         if (b.customId.startsWith("complete")) {
                             await sheets.spreadsheets.batchUpdate({
                                 spreadsheetId: GOOGLE_SHEET_ID,
@@ -185,9 +182,7 @@ export default {
                             return b.update({ content: `Task completed: **${desc}**`, components: [] });
                         }
 
-                        // --- CLAIM LOGIC (Step 1) ---
                         if (b.customId.startsWith("claim")) {
-                            // Update claimed status immediately
                             await sheets.spreadsheets.values.update({
                                 spreadsheetId: GOOGLE_SHEET_ID,
                                 range: `ToDoList!E${freshIndex + 1}`,
@@ -195,7 +190,6 @@ export default {
                                 requestBody: { values: [[b.user.id]] }
                             });
 
-                            // ASK FOR REMINDERS
                             const reminderRow = new ActionRowBuilder().addComponents(
                                 new ButtonBuilder().setCustomId(`remind_yes_${id}`).setLabel("Yes, DM me reminders").setStyle(ButtonStyle.Success),
                                 new ButtonBuilder().setCustomId(`remind_no_${id}`).setLabel("No, thanks").setStyle(ButtonStyle.Secondary)
@@ -207,12 +201,10 @@ export default {
                             });
                         }
 
-                        // --- REMINDER CHOICE LOGIC (Step 2) ---
                         if (b.customId.startsWith("remind_")) {
                             const isYes = b.customId.includes("yes");
-                            const nextRemind = isYes ? (Date.now() + 86400000).toString() : ""; // 24 hours in ms
+                            const nextRemind = isYes ? (Date.now() + 86400000).toString() : ""; 
                             
-                            // Update Column G (Index 6)
                             await sheets.spreadsheets.values.update({
                                 spreadsheetId: GOOGLE_SHEET_ID,
                                 range: `ToDoList!G${freshIndex + 1}`,
@@ -235,52 +227,3 @@ export default {
         }
     }
 };
-
-// ==========================================
-// BACKGROUND REMINDER SYSTEM
-// ==========================================
-// This interval checks for due reminders every 1 hour
-import { client } from "../index.js"; // Ensure you import your Discord Client here
-
-setInterval(async () => {
-    try {
-        const res = await sheets.spreadsheets.values.get({ spreadsheetId: GOOGLE_SHEET_ID, range: "ToDoList!A:G" });
-        const rows = res.data.values || [];
-        if (rows.length < 2) return;
-
-        const now = Date.now();
-        const updates = []; // To store updates for sheet
-
-        for (let i = 1; i < rows.length; i++) {
-            const [id, desc, targetId, targetType, claimedBy, createdAt, nextReminder] = rows[i];
-            
-            // Logic: Must be claimed, have a reminder set, and time must be passed
-            if (claimedBy && claimedBy !== "None" && nextReminder && parseInt(nextReminder) <= now) {
-                
-                try {
-                    // Send DM
-                    const user = await client.users.fetch(claimedBy);
-                    if (user) {
-                        await user.send(`**Task Reminder:**\n${desc}\n\nPlease complete this task or visit the server to manage it.`);
-                    }
-                } catch (e) {
-                    console.log(`Could not DM user ${claimedBy}`);
-                }
-
-                // Update Reminder to +24 hours
-                const newTime = (now + 86400000).toString();
-                
-                // We map the specific update request for Google Sheets
-                // We are updating Column G (Index 6) for this specific row (i + 1 for 0-index vs 1-index)
-                await sheets.spreadsheets.values.update({
-                    spreadsheetId: GOOGLE_SHEET_ID,
-                    range: `ToDoList!G${i + 1}`,
-                    valueInputOption: "USER_ENTERED",
-                    requestBody: { values: [[newTime]] }
-                });
-            }
-        }
-    } catch (err) {
-        console.error("Reminder Loop Error:", err);
-    }
-}, 3600000); // Run every 1 hour (3600000 ms)
