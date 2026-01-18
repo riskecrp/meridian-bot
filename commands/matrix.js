@@ -93,15 +93,21 @@ export default {
     async execute(interaction) {
         const ROLE_FM_ID = "1457229857749729363";
         const ROLE_LEADERSHIP_ID = "1457670376745074730";
+        const ROLE_VIEW_ACCESS_ID = "1457208224435666977"; // New permitted role for 'view' only
 
         const hasFM = interaction.member.roles.cache.has(ROLE_FM_ID);
         const hasLeadership = interaction.member.roles.cache.has(ROLE_LEADERSHIP_ID);
+        const hasViewAccess = interaction.member.roles.cache.has(ROLE_VIEW_ACCESS_ID);
         
         const sub = interaction.options.getSubcommand();
         const isView = (sub === 'view' || sub === 'viewteam' || sub === 'overview');
 
         if (isView) {
-            if (!hasFM && !hasLeadership) return interaction.reply({ content: "❌ Permission Denied: [ECRP] Faction Management required.", ephemeral: true });
+            // Allow if FM, Leadership, OR (sub is 'view' AND has the specific role)
+            const isAuthorized = hasFM || hasLeadership || (sub === 'view' && hasViewAccess);
+            if (!isAuthorized) {
+                return interaction.reply({ content: "❌ Permission Denied: [ECRP] Faction Management required.", ephemeral: true });
+            }
         } else {
             if (!hasLeadership) return interaction.reply({ content: "❌ Permission Denied: [ECRP] FM Leadership required.", ephemeral: true });
         }
@@ -246,7 +252,7 @@ export default {
 
                 // DISPLAY LOGIC
                 if (chunks.length === 0) {
-                     embed.addFields({ name: `🛡️ ${teamName}`, value: staffBlock, inline: false });
+                      embed.addFields({ name: `🛡️ ${teamName}`, value: staffBlock, inline: false });
                 } else {
                     const combinedStart = `${staffBlock}\n\n**Team Factions:**\n${chunks[0]}`;
                     if (combinedStart.length <= 1024 && chunks.length === 1) {
