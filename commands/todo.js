@@ -120,7 +120,8 @@ export default {
                     .setTitle(`Your To-Do List (${myTasks.length})`)
                     .setColor(0x00FF00)
                     .setDescription(myTasks.map(t => {
-                        const isClaimed = t[4] !== "None" ? "(Claimed)" : "(Open)";
+                        // UPDATE: Show WHO claimed it
+                        const isClaimed = t[4] !== "None" ? `(Claimed by <@${t[4]}>)` : "(Open)";
                         const typeLabel = t[3] === "Private" ? "[Private]" : "";
                         return `• **${t[1]}** ${typeLabel} ${isClaimed}`;
                     }).join("\n").substring(0, 4096));
@@ -160,7 +161,7 @@ export default {
                     btnRow.addComponents(claimBtn, completeBtn);
 
                     const controlMsg = await i.reply({
-                        content: `**Task:** ${desc}\n**Status:** ${isUnclaimed ? "Unclaimed" : isMyClaim ? "Claimed by You" : "Claimed by someone else"}`,
+                        content: `**Task:** ${desc}\n**Status:** ${isUnclaimed ? "Unclaimed" : isMyClaim ? "Claimed by You" : `Claimed by <@${claimedBy}>`}`,
                         components: [btnRow],
                         ephemeral: true,
                         fetchReply: true
@@ -196,7 +197,7 @@ export default {
                             );
 
                             await b.update({ 
-                                content: `You have claimed: **${desc}**.\n\nWould you like a DM reminder of this task every 24 hours until completion?`, 
+                                content: `You have claimed: **${desc}**.\n\nWould you like a DM reminder of this task every 24 hours of completion?`, 
                                 components: [reminderRow] 
                             });
                         }
