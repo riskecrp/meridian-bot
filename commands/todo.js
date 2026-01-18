@@ -19,6 +19,26 @@ function getTodayDate() {
     return new Date().toLocaleString('en-GB', { dateStyle: 'short', timeStyle: 'short' });
 }
 
+// --- HELPER: Log History ---
+async function logHistory(action, actor, taskRow) {
+    try {
+        // taskRow format: [id, desc, targetId, targetType...]
+        const [id, desc, targetId, targetType] = taskRow;
+        const timestamp = getTodayDate();
+        const actorStr = `${actor.username} (${actor.id})`;
+        const targetStr = `${targetType}: ${targetId}`; 
+
+        await sheets.spreadsheets.values.append({
+            spreadsheetId: GOOGLE_SHEET_ID,
+            range: "ToDoLog!A:F",
+            valueInputOption: "USER_ENTERED",
+            requestBody: { values: [[timestamp, action, actorStr, id, desc, targetStr]] }
+        });
+    } catch (err) {
+        console.error("Failed to log history:", err);
+    }
+}
+
 export default {
     data: new SlashCommandBuilder()
         .setName("todo")
@@ -69,13 +89,18 @@ export default {
                     isPrivate = true;
                 }
                 
+                const newRow = [id, desc, targetId, targetType, "None", createdDate, ""];
+
                 // Save to Google Sheets
                 await sheets.spreadsheets.values.append({
                     spreadsheetId: GOOGLE_SHEET_ID,
                     range: "ToDoList!A:G",
                     valueInputOption: "USER_ENTERED",
-                    requestBody: { values: [[id, desc, targetId, targetType, "None", createdDate, ""]] }
+                    requestBody: { values: [newRow] }
                 });
+
+                // LOG HISTORY
+                await logHistory("CREATED", interaction.user, newRow);
 
                 // Notification Logic
                 if (!isPrivate) {
@@ -120,7 +145,6 @@ export default {
                     .setTitle(`Your To-Do List (${myTasks.length})`)
                     .setColor(0x00FF00)
                     .setDescription(myTasks.map(t => {
-                        // UPDATE: Show WHO claimed it
                         const isClaimed = t[4] !== "None" ? `(Claimed by <@${t[4]}>)` : "(Open)";
                         const typeLabel = t[3] === "Private" ? "[Private]" : "";
                         return `• **${t[1]}** ${typeLabel} ${isClaimed}`;
@@ -170,19 +194,30 @@ export default {
                     const btnCollector = controlMsg.createMessageComponentCollector({ componentType: ComponentType.Button, time: 60000 });
 
                     btnCollector.on('collect', async b => {
+                        // RE-FETCH sheet to ensure fresh state
                         const freshRes = await sheets.spreadsheets.values.get({ spreadsheetId: GOOGLE_SHEET_ID, range: "ToDoList!A:G" });
                         const freshRows = freshRes.data.values || [];
                         const freshIndex = freshRows.findIndex(r => r[0] === id);
+                        
                         if (freshIndex === -1) return b.update({ content: "Task no longer exists.", components: [] });
 
+                        // Capture the current row data for logging before modification/deletion
+                        const currentRowData = freshRows[freshIndex];
+
+                        // --- COMPLETE LOGIC ---
                         if (b.customId.startsWith("complete")) {
                             await sheets.spreadsheets.batchUpdate({
                                 spreadsheetId: GOOGLE_SHEET_ID,
                                 requestBody: { requests: [{ deleteDimension: { range: { sheetId: TODO_TAB_ID, dimension: "ROWS", startIndex: freshIndex, endIndex: freshIndex + 1 } } }] }
                             });
+
+                            // LOG HISTORY
+                            await logHistory("COMPLETED", b.user, currentRowData);
+
                             return b.update({ content: `Task completed: **${desc}**`, components: [] });
                         }
 
+                        // --- CLAIM LOGIC ---
                         if (b.customId.startsWith("claim")) {
                             await sheets.spreadsheets.values.update({
                                 spreadsheetId: GOOGLE_SHEET_ID,
@@ -190,6 +225,9 @@ export default {
                                 valueInputOption: "USER_ENTERED",
                                 requestBody: { values: [[b.user.id]] }
                             });
+
+                            // LOG HISTORY
+                            await logHistory("CLAIMED", b.user, currentRowData);
 
                             const reminderRow = new ActionRowBuilder().addComponents(
                                 new ButtonBuilder().setCustomId(`remind_yes_${id}`).setLabel("Yes, DM me reminders").setStyle(ButtonStyle.Success),
@@ -202,6 +240,7 @@ export default {
                             });
                         }
 
+                        // --- REMINDER LOGIC ---
                         if (b.customId.startsWith("remind_")) {
                             const isYes = b.customId.includes("yes");
                             const nextRemind = isYes ? (Date.now() + 86400000).toString() : ""; 
