@@ -196,7 +196,7 @@ export default {
                             );
 
                             await b.update({ 
-                                content: `You have claimed: **${desc}**.\n\nWould you like a DM reminder of this task every 24 hours of completion?`, 
+                                content: `You have claimed: **${desc}**.\n\nWould you like a DM reminder of this task every 24 hours until completion?`, 
                                 components: [reminderRow] 
                             });
                         }
