@@ -5,7 +5,7 @@ import {
 import { sheets, GOOGLE_SHEET_ID } from "../utils/googleClient.js";
 
 // --- CONFIGURATION ---
-const GAM_ROLE_ID = "1457189093594239147"; // [ECRP Game Affairs Management]
+const GAM_ROLE_ID = "1457189093594239147"; 
 const SHEET_TAB_NAME = "ImportsList";
 
 // --- HELPERS ---
@@ -36,6 +36,42 @@ function getColumnLetter(colIndex) {
         colIndex = Math.floor(colIndex) - 1; 
     }
     return letter;
+}
+
+// --- AMMO COMPRESSOR HELPER ---
+// Turns a list of 20 ammo types into a clean list of 4 calibers
+function formatAmmoList(items) {
+    const groups = {};
+    
+    items.forEach(item => {
+        // Regex to find the "Caliber" part. 
+        // Looks for patterns like "9mm", ".45 ACP", "5.56mm" at the start
+        // And strips out "Rounds", "(100x)", "AP", "FMJ", etc for the key
+        
+        // Simplistic cleaner: Remove "Rounds", "(100x)", "(50x)"
+        let cleaner = item.replace(/Rounds|Round|\(\d+x\)/gi, "").trim();
+        
+        // Attempt to split Caliber from Variant (AP/FMJ/Tracer)
+        // Common Calibers in GTA/FiveM
+        const calibers = ["9mm", ".45 ACP", "5.56mm", "7.62mm", ".357", ".44 Magnum", ".50", "12 Gauge", ".36 Revolver"];
+        
+        let foundCal = calibers.find(c => cleaner.startsWith(c));
+        let key = foundCal || "Other";
+        let variant = cleaner.replace(key, "").trim();
+        
+        if (!variant) variant = "Standard";
+        
+        if (!groups[key]) groups[key] = [];
+        groups[key].push(variant);
+    });
+
+    // Rebuild the list
+    return Object.entries(groups).map(([caliber, variants]) => {
+        if (caliber === "Other") return variants.map(v => `• ${v}`).join("\n");
+        // Join variants with commas
+        const varString = variants.join(", ");
+        return `• **${caliber}** (${varString})`;
+    });
 }
 
 export default {
@@ -99,25 +135,30 @@ export default {
                 const headers = grid[0];
 
                 // ------------------------------------------------
-                // VIEW BY FACTION (Improved Organization)
+                // VIEW BY FACTION (SMART FORMATTING)
                 // ------------------------------------------------
                 if (type === "faction") {
                     const colIndex = headers.indexOf(target);
                     if (colIndex === -1) return interaction.editReply(`❌ Faction **${target}** not found in headers.`);
 
-                    const categories = {};
+                    const gearCategories = {};
+                    const ammoCategories = [];
                     let totalItems = 0;
 
                     // Start loop at 1 to skip header
                     for (let i = 1; i < grid.length; i++) {
                         const row = grid[i];
                         if (row[colIndex] === "TRUE") {
-                            // Column E (Index 4) is Class. Default to "General" if empty.
-                            const itemClass = row[4] ? row[4].trim() : "General";
                             const itemName = row[1]; // Column B
+                            const itemClass = row[4] ? row[4].trim() : "General"; // Column E
 
-                            if (!categories[itemClass]) categories[itemClass] = [];
-                            categories[itemClass].push(itemName);
+                            // SPLIT AMMO VS GEAR
+                            if (itemClass.toLowerCase().includes("ammo")) {
+                                ammoCategories.push(itemName);
+                            } else {
+                                if (!gearCategories[itemClass]) gearCategories[itemClass] = [];
+                                gearCategories[itemClass].push(itemName);
+                            }
                             totalItems++;
                         }
                     }
@@ -127,20 +168,42 @@ export default {
                         .setColor(0x00AAFF)
                         .setFooter({ text: `Total Authorized Items: ${totalItems}` });
 
-                    // Sort Categories Alphabetically
-                    const sortedKeys = Object.keys(categories).sort();
-
-                    if (sortedKeys.length === 0) {
+                    if (totalItems === 0) {
                         embed.setDescription("_No imports authorized._");
-                    } else {
-                        // Create a field for each category
-                        sortedKeys.forEach(key => {
-                            const itemList = categories[key].sort().map(i => `• ${i}`).join("\n");
-                            embed.addFields({ 
-                                name: `📂 ${key}`, 
-                                value: itemList.length > 1024 ? itemList.substring(0, 1020) + "..." : itemList, 
-                                inline: true 
-                            });
+                        return interaction.editReply({ embeds: [embed] });
+                    }
+
+                    // 1. RENDER GEAR FIELDS (Alphabetical)
+                    const sortedGearKeys = Object.keys(gearCategories).sort();
+                    
+                    sortedGearKeys.forEach(key => {
+                        // CLEANUP HEADER: "Attachment Flashlight" -> "Flashlight"
+                        let cleanTitle = key.replace("Attachment", "").trim();
+                        let emoji = "📂";
+                        
+                        // Smart Emojis
+                        if (key.includes("Attachment")) emoji = "📎";
+                        if (key.includes("Pistol") || key.includes("SMG") || key.includes("MG")) emoji = "🔫";
+                        if (key.includes("Melee")) emoji = "🔪";
+                        if (key.includes("Mod")) emoji = "⚙️";
+                        if (key.includes("Ingredient")) emoji = "🧪";
+
+                        const itemList = gearCategories[key].sort().map(i => `• ${i}`).join("\n");
+                        
+                        embed.addFields({ 
+                            name: `${emoji} ${cleanTitle}`, 
+                            value: itemList.length > 1024 ? itemList.substring(0, 1020) + "..." : itemList, 
+                            inline: true 
+                        });
+                    });
+
+                    // 2. RENDER AMMO (Full Width, Bottom, Compressed)
+                    if (ammoCategories.length > 0) {
+                        const compressedAmmo = formatAmmoList(ammoCategories);
+                        embed.addFields({
+                            name: "🎒 Ammunition",
+                            value: compressedAmmo.join("\n"),
+                            inline: false // Force full width to look clean
                         });
                     }
 
