@@ -5,7 +5,7 @@ import {
 import { sheets, GOOGLE_SHEET_ID } from "../utils/googleClient.js";
 
 // --- CONFIGURATION ---
-const GAM_ROLE_ID = "123456789012345678"; // Replace with actual ID
+const GAM_ROLE_ID = "1457189093594239147"; // [ECRP Game Affairs Management]
 const SHEET_TAB_NAME = "ImportsList";
 
 // --- HELPERS ---
