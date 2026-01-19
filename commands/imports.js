@@ -10,7 +10,6 @@ const SHEET_TAB_NAME = "ImportsList";
 
 // --- HELPERS ---
 
-// 1. Fetch all Headers (Row 1) to map Faction Names to Column Indices
 async function getHeaders() {
     const res = await sheets.spreadsheets.values.get({
         spreadsheetId: GOOGLE_SHEET_ID,
@@ -19,18 +18,15 @@ async function getHeaders() {
     return res.data.values?.[0] || [];
 }
 
-// 2. Fetch all Items (Column B) to map Item Names to Row Indices
 async function getItems() {
     const res = await sheets.spreadsheets.values.get({
         spreadsheetId: GOOGLE_SHEET_ID,
         range: `${SHEET_TAB_NAME}!B:B` 
     });
     const rows = res.data.values || [];
-    // Filter out empty rows or the header "Item"
     return rows.map((r, i) => ({ name: r[0], rowIndex: i })).filter(i => i.name && i.name !== "Item");
 }
 
-// 3. Helper to convert Column Index to Letter
 function getColumnLetter(colIndex) {
     let temp, letter = '';
     while (colIndex >= 0) {
@@ -46,20 +42,17 @@ export default {
     data: new SlashCommandBuilder()
         .setName("imports")
         .setDescription("Manage Faction Import Permissions")
-        // VIEW SUBCOMMAND
         .addSubcommand(sub => sub.setName("view").setDescription("View permissions.")
             .addStringOption(o => o.setName("type").setDescription("Search by?").setRequired(true)
                 .addChoices({ name: "By Faction (See what they have)", value: "faction" }, { name: "By Item (See who has it)", value: "item" }))
             .addStringOption(o => o.setName("target").setDescription("The Faction or Item Name").setRequired(true).setAutocomplete(true))
         )
-        // TOGGLE SUBCOMMAND (UPDATED FOR BULK)
         .addSubcommand(sub => sub.setName("toggle").setDescription("Grant or Revoke items.")
             .addStringOption(o => o.setName("faction").setDescription("Faction Name").setRequired(true).setAutocomplete(true))
             .addStringOption(o => o.setName("items").setDescription("Item Name(s) - Comma separated").setRequired(true).setAutocomplete(true))
             .addStringOption(o => o.setName("access").setDescription("Grant or Revoke?").setRequired(true)
                 .addChoices({ name: "✅ Allow (Grant)", value: "TRUE" }, { name: "❌ Deny (Revoke)", value: "FALSE" }))
         )
-        // ADD ITEM SUBCOMMAND (Simplified)
         .addSubcommand(sub => sub.setName("add").setDescription("Add new Items to the list.")
             .addStringOption(o => o.setName("name").setDescription("Item Name(s) - Comma separated").setRequired(true))
         ),
@@ -105,27 +98,59 @@ export default {
                 const grid = res.data.values || [];
                 const headers = grid[0];
 
+                // ------------------------------------------------
+                // VIEW BY FACTION (Improved Organization)
+                // ------------------------------------------------
                 if (type === "faction") {
                     const colIndex = headers.indexOf(target);
                     if (colIndex === -1) return interaction.editReply(`❌ Faction **${target}** not found in headers.`);
 
-                    const allowedItems = [];
+                    const categories = {};
+                    let totalItems = 0;
+
+                    // Start loop at 1 to skip header
                     for (let i = 1; i < grid.length; i++) {
                         const row = grid[i];
                         if (row[colIndex] === "TRUE") {
-                            allowedItems.push(`• **${row[1]}**`); 
+                            // Column E (Index 4) is Class. Default to "General" if empty.
+                            const itemClass = row[4] ? row[4].trim() : "General";
+                            const itemName = row[1]; // Column B
+
+                            if (!categories[itemClass]) categories[itemClass] = [];
+                            categories[itemClass].push(itemName);
+                            totalItems++;
                         }
                     }
 
                     const embed = new EmbedBuilder()
                         .setTitle(`📦 Imports: ${target}`)
                         .setColor(0x00AAFF)
-                        .setDescription(allowedItems.length ? allowedItems.join("\n") : "_No imports authorized._")
-                        .setFooter({ text: `Total Items: ${allowedItems.length}` });
+                        .setFooter({ text: `Total Authorized Items: ${totalItems}` });
+
+                    // Sort Categories Alphabetically
+                    const sortedKeys = Object.keys(categories).sort();
+
+                    if (sortedKeys.length === 0) {
+                        embed.setDescription("_No imports authorized._");
+                    } else {
+                        // Create a field for each category
+                        sortedKeys.forEach(key => {
+                            const itemList = categories[key].sort().map(i => `• ${i}`).join("\n");
+                            embed.addFields({ 
+                                name: `📂 ${key}`, 
+                                value: itemList.length > 1024 ? itemList.substring(0, 1020) + "..." : itemList, 
+                                inline: true 
+                            });
+                        });
+                    }
 
                     return interaction.editReply({ embeds: [embed] });
-
-                } else {
+                } 
+                
+                // ------------------------------------------------
+                // VIEW BY ITEM
+                // ------------------------------------------------
+                else {
                     const itemRow = grid.find(r => r[1] === target);
                     if (!itemRow) return interaction.editReply(`❌ Item **${target}** not found.`);
 
@@ -145,37 +170,29 @@ export default {
                 }
             }
 
-            // --- TOGGLE COMMAND (BULK) ---
+            // --- TOGGLE COMMAND ---
             if (sub === "toggle") {
                 const factionName = interaction.options.getString("faction");
                 const itemInput = interaction.options.getString("items");
                 const newVal = interaction.options.getString("access");
 
-                // 1. Get Headers & Map Faction Column
                 const headers = await getHeaders();
                 const colIndex = headers.indexOf(factionName);
                 if (colIndex === -1) return interaction.editReply(`❌ Faction header **${factionName}** not found.`);
                 
                 const colLetter = getColumnLetter(colIndex);
-
-                // 2. Get All Items
                 const allItems = await getItems();
 
-                // 3. Process Input List
                 const inputNames = itemInput.split(',').map(n => n.trim()).filter(n => n.length > 0);
-                const updates = []; // To store batch requests
+                const updates = []; 
                 const successNames = [];
                 const notFoundNames = [];
 
                 for (const name of inputNames) {
                     const itemObj = allItems.find(i => i.name.toLowerCase() === name.toLowerCase());
                     if (itemObj) {
-                        // Found it! Prepare the update.
                         const range = `${SHEET_TAB_NAME}!${colLetter}${itemObj.rowIndex + 1}`;
-                        updates.push({
-                            range: range,
-                            values: [[newVal]]
-                        });
+                        updates.push({ range: range, values: [[newVal]] });
                         successNames.push(itemObj.name);
                     } else {
                         notFoundNames.push(name);
@@ -186,16 +203,11 @@ export default {
                     return interaction.editReply(`❌ None of the items were found: ${notFoundNames.join(", ")}`);
                 }
 
-                // 4. BATCH UPDATE (One request for all cells)
                 await sheets.spreadsheets.values.batchUpdate({
                     spreadsheetId: GOOGLE_SHEET_ID,
-                    requestBody: {
-                        valueInputOption: "USER_ENTERED",
-                        data: updates
-                    }
+                    requestBody: { valueInputOption: "USER_ENTERED", data: updates }
                 });
 
-                // 5. Build Response
                 const statusEmoji = newVal === "TRUE" ? "✅" : "❌";
                 const statusText = newVal === "TRUE" ? "Authorized" : "Denied";
                 
@@ -212,7 +224,6 @@ export default {
             // --- ADD ITEM COMMAND ---
             if (sub === "add") {
                 const nameInput = interaction.options.getString("name");
-                
                 const names = nameInput.split(',').map(n => n.trim()).filter(n => n.length > 0);
                 const existingItems = await getItems();
                 const duplicates = [];
